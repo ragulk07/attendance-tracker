@@ -771,7 +771,7 @@ function renderConsolidated(){
     valEl.className = 'big-pct ' + cls;
     stickyPct.textContent = pct.toFixed(1) + '%';
     stickyPct.className = cls;
-    $('conBatchTag').textContent = portalMeta.batch ? `Batch ${portalMeta.batch}` : 'Batch Active';
+    $('conBatchTag').textContent = portalMeta.batchLabel || (portalMeta.batch ? `Batch ${portalMeta.batch}` : 'Batch Active');
   } else {
     banner.style.display = 'none';
     sticky.style.display = 'none';
@@ -781,7 +781,7 @@ function renderConsolidated(){
   const btn = $('portalConnectBtn');
   const outBtn = $('portalSignOutBtn');
   if(portalMeta.connected){
-    btn.textContent = `🔄 Sync (${portalMeta.batch || 'Portal'})`;
+    btn.textContent = `🔄 Sync (${portalMeta.batchLabel || portalMeta.batch || 'Portal'})`;
     btn.className = 'portal-btn connected';
     outBtn.style.display = 'inline-flex';
     if(portalMeta.lastSynced){
@@ -1047,8 +1047,11 @@ $('portalLoginSubmit').addEventListener('click', async () => {
 });
 
 $('portalBatchSync').addEventListener('click', () => {
-  const chosenBatch = $('portalBatchSelect').value;
+  const sel = $('portalBatchSelect');
+  const chosenBatch = sel.value;
+  const chosenOption = sel.options[sel.selectedIndex];
   if(!chosenBatch) return;
+  portalMeta.batchLabel = chosenOption ? chosenOption.textContent : chosenBatch;
   closePortalModal();
   syncBatch(chosenBatch);
 });

@@ -48,6 +48,36 @@ class PortalError extends Error {
   }
 }
 
+// Global cache for term <-> consolidated batch mapping
+const batchMap = new Map();
+
+function normalizeBatchLabel(label) {
+  return String(label || '')
+    .toUpperCase()
+    .replace(/UG|PG/g, '')
+    .replace(/[^0-9A-Z]/g, '');
+}
+
+function recordBatchMapping(consolidatedId, termId, label) {
+  const mapping = { consolidatedId: String(consolidatedId), termId: String(termId), label };
+  if (consolidatedId) batchMap.set(String(consolidatedId), mapping);
+  if (termId) batchMap.set(String(termId), mapping);
+  const norm = normalizeBatchLabel(label);
+  if (norm) batchMap.set(norm, mapping);
+}
+
+function resolveBatch(batchValue) {
+  const valStr = String(batchValue || '');
+  if (batchMap.has(valStr)) {
+    return batchMap.get(valStr);
+  }
+  const norm = normalizeBatchLabel(valStr);
+  if (batchMap.has(norm)) {
+    return batchMap.get(norm);
+  }
+  return { consolidatedId: valStr, termId: valStr, label: valStr };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // SECURITY & SSRF SAFEGUARDS
 // ═══════════════════════════════════════════════════════════════════
@@ -92,65 +122,55 @@ function createClient(jar, customAxiosInstance = null) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OFFLINE PARSING HELPERS (Also tested against fixtures)
+// OFFLINE PARSING HELPERS
 // ═══════════════════════════════════════════════════════════════════
 
-/**
- * Extract CSRF token from page HTML
- */
 function extractCsrfToken(html) {
   const $ = cheerio.load(html);
   const token = $(SELECTORS.CSRF_TOKEN).val();
   return token || '';
 }
 
-/**
- * Detect captcha or OTP in HTML
- */
 function hasCaptchaOrOtp(html) {
   const $ = cheerio.load(html);
   return $(SELECTORS.CAPTCHA_CONTAINER).length > 0;
 }
 
-/**
- * Parse batches from consolidated attendance page HTML
- */
 function parseBatchesFromHtml(html) {
   const $ = cheerio.load(html);
   const batches = [];
   const select = $(SELECTORS.CONSOLIDATED_SELECT);
 
-  if (select.length === 0) {
-    // Check if calculate-my-attendance-term is present
-    const termSelect = $(SELECTORS.CALCULATE_TERM_SELECT);
-    if (termSelect.length > 0) {
-      termSelect.find('option').each((_, el) => {
-        const val = $(el).val()?.trim();
-        const text = $(el).text()?.trim();
-        if (val) {
-          batches.push({ value: val, label: text || val });
-        }
-      });
-      return batches;
-    }
-    throw new PortalError('Could not find batch selection options on portal', ERROR_CODES.PORTAL_CHANGED);
+  if (select.length > 0) {
+    select.find('option').each((_, el) => {
+      const val = $(el).val()?.trim();
+      const text = $(el).text()?.trim();
+      if (val) {
+        batches.push({ value: val, label: text || val });
+      }
+    });
+    return batches;
   }
 
-  select.find('option').each((_, el) => {
-    const val = $(el).val()?.trim();
-    const text = $(el).text()?.trim();
-    if (val) {
-      batches.push({ value: val, label: text || val });
-    }
-  });
+  const termSelect = $(SELECTORS.CALCULATE_TERM_SELECT);
+  if (termSelect.length > 0) {
+    termSelect.find('option').each((_, el) => {
+      const val = $(el).val()?.trim();
+      const text = $(el).text()?.trim();
+      if (val) {
+        batches.push({ value: val, label: text || val });
+      }
+    });
+    return batches;
+  }
 
-  return batches;
+  throw new PortalError('Could not find batch selection options on portal', ERROR_CODES.PORTAL_CHANGED);
 }
 
-/**
- * Parse consolidated attendance percentage & subjects list from consolidated page HTML
- */
 function parseConsolidatedFromHtml(html) {
+  if (!html || typeof html !== 'string') {
+    return { consolidated: { percentage: 0 }, subjects: [] };
+  }
   const $ = cheerio.load(html);
   const pctText = $(SELECTORS.CONSOLIDATED_PERCENTAGE).text().trim();
   const pctMatch = pctText.match(/([\d.]+)%/);
@@ -161,7 +181,6 @@ function parseConsolidatedFromHtml(html) {
     const cells = $(tr).find('td');
     if (cells.length < 7) return;
 
-    // Slot / Subject cell has code and title
     const subjectCell = $(cells[2]);
     const code = subjectCell.find('.fw-semibold').text().trim();
     const title = subjectCell.find('.small.text-muted').text().trim();
@@ -190,18 +209,10 @@ function parseConsolidatedFromHtml(html) {
 // PORTAL ADAPTER IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════
 
-/**
- * Log into Saveetha portal and retrieve available batches
- * @param {CookieJar} jar 
- * @param {string} username 
- * @param {string} password 
- * @param {object} [customAxios] optional mock client for offline tests
- * @returns {Promise<{ batches: Array<{ value: string, label: string }> }>}
- */
 async function login(jar, username, password, customAxios = null) {
   const client = createClient(jar, customAxios);
 
-  // 1. Fetch login page to get initial cookies and CSRF token
+  // 1. Fetch login page for CSRF
   let loginPageRes;
   try {
     loginPageRes = await client.get(URLS.LOGIN);
@@ -215,7 +226,7 @@ async function login(jar, username, password, customAxios = null) {
 
   const csrfToken = extractCsrfToken(loginPageRes.data);
 
-  // 2. Perform POST login
+  // 2. Submit credentials
   const params = new URLSearchParams();
   params.append('csrfmiddlewaretoken', csrfToken);
   params.append(SELECTORS.USERNAME_FIELD, username);
@@ -233,59 +244,140 @@ async function login(jar, username, password, customAxios = null) {
     throw new PortalError(`Login request failed: ${err.message}`, ERROR_CODES.PORTAL_UNAVAILABLE);
   }
 
-  // Check if response redirected or rendered login page with errors
   const resHtml = typeof postRes.data === 'string' ? postRes.data : '';
   if (hasCaptchaOrOtp(resHtml)) {
     throw new PortalError('Portal requires CAPTCHA or OTP verification', ERROR_CODES.CAPTCHA_REQUIRED);
   }
 
   const $ = cheerio.load(resHtml);
-  if ($(SELECTORS.ERROR_BOX).length > 0 || $(SELECTORS.CSRF_TOKEN).length > 0 && $('input[name="password"]').length > 0) {
+  if ($(SELECTORS.ERROR_BOX).length > 0 || ($(SELECTORS.CSRF_TOKEN).length > 0 && $('input[name="password"]').length > 0)) {
     const errorMsg = $(SELECTORS.ERROR_BOX).text().trim() || 'Invalid username or password.';
     throw new PortalError(errorMsg, ERROR_CODES.LOGIN_FAILED);
   }
 
-  // 3. Navigate to consolidated attendance page to load batch list
-  let consolidatedRes;
+  // 3. Retrieve batches from view-consolidated-attendance
+  let consolidatedBatches = [];
   try {
-    consolidatedRes = await client.get(URLS.VIEW_CONSOLIDATED);
+    const conRes = await client.get(URLS.VIEW_CONSOLIDATED);
+    consolidatedBatches = parseBatchesFromHtml(conRes.data);
   } catch (err) {
-    throw new PortalError(`Failed to load consolidated attendance page: ${err.message}`, ERROR_CODES.PORTAL_UNAVAILABLE);
+    // Continue to fallback
   }
 
-  const batches = parseBatchesFromHtml(consolidatedRes.data);
+  // 4. Retrieve terms from calculate-my-attendance
+  let calculateTerms = [];
+  try {
+    const calcRes = await client.get(URLS.CALCULATE_ATTENDANCE);
+    const $calc = cheerio.load(calcRes.data);
+    $calc(SELECTORS.CALCULATE_TERM_SELECT).find('option').each((_, el) => {
+      const v = $calc(el).val()?.trim();
+      const t = $calc(el).text()?.trim();
+      if (v) calculateTerms.push({ value: v, label: t || v });
+    });
+  } catch (err) {
+    // Continue
+  }
+
+  // Correlate consolidated batches with calculate terms
+  consolidatedBatches.forEach(cb => {
+    const norm = normalizeBatchLabel(cb.label);
+    const matchingTerm = calculateTerms.find(ct => normalizeBatchLabel(ct.label) === norm);
+    recordBatchMapping(cb.value, matchingTerm ? matchingTerm.value : cb.value, cb.label);
+  });
+
+  calculateTerms.forEach(ct => {
+    const norm = normalizeBatchLabel(ct.label);
+    const matchingCon = consolidatedBatches.find(cb => normalizeBatchLabel(cb.label) === norm);
+    if (!batchMap.has(ct.value)) {
+      recordBatchMapping(matchingCon ? matchingCon.value : ct.value, ct.value, ct.label);
+    }
+  });
+
+  const batches = consolidatedBatches.length > 0 ? consolidatedBatches : calculateTerms;
+  if (batches.length === 0) {
+    throw new PortalError('No academic batches found on your account', ERROR_CODES.BATCH_NOT_FOUND);
+  }
+
   return { batches };
 }
 
-/**
- * Fetch overview (consolidated attendance and subjects) for a chosen batch
- * @param {CookieJar} jar 
- * @param {string} batchValue 
- * @param {object} [customAxios] 
- * @returns {Promise<{ batch: string, consolidated: { percentage: number }, subjects: Array<{ id: string, name: string, percentage: number }> }>}
- */
 async function getOverview(jar, batchValue, customAxios = null) {
   if (!batchValue) {
     throw new PortalError('Batch parameter is required', ERROR_CODES.BATCH_NOT_FOUND);
   }
 
   const client = createClient(jar, customAxios);
+  const resolved = resolveBatch(batchValue);
+  const conId = resolved.consolidatedId || batchValue;
+  const termId = resolved.termId || batchValue;
 
-  let res;
+  let consolidatedHtml = '';
+
+  // 1. Fetch live data from /academics/view-consolidated-attendance/data/
   try {
-    // Request consolidated data with chosen batch ID
-    res = await client.get(URLS.VIEW_CONSOLIDATED, {
-      params: { consolidated_attendance_id: batchValue }
+    const dataRes = await client.get(URLS.CONSOLIDATED_DATA, {
+      params: { consolidated_attendance_id: conId },
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'text/html,application/xhtml+xml,application/json,*/*'
+      }
     });
+
+    if (typeof dataRes.data === 'string') {
+      consolidatedHtml = dataRes.data;
+    } else if (typeof dataRes.data === 'object' && dataRes.data !== null) {
+      consolidatedHtml = dataRes.data.html || dataRes.data.content || JSON.stringify(dataRes.data);
+    }
   } catch (err) {
-    throw new PortalError(`Failed to fetch overview: ${err.message}`, ERROR_CODES.PORTAL_UNAVAILABLE);
+    // Silently proceed to page fallback
   }
 
-  if (typeof res.data === 'string' && (res.data.includes('Sign in') || res.data.includes('id_password'))) {
+  // 2. If data endpoint didn't provide HTML with ca-percentage, fetch main page
+  if (!consolidatedHtml || !consolidatedHtml.includes('ca-percentage')) {
+    try {
+      const pageRes = await client.get(URLS.VIEW_CONSOLIDATED, {
+        params: { consolidated_attendance_id: conId }
+      });
+      if (typeof pageRes.data === 'string') {
+        consolidatedHtml = pageRes.data;
+      }
+    } catch (e) {}
+  }
+
+  if (consolidatedHtml.includes('Sign in') && consolidatedHtml.includes('id_password')) {
     throw new PortalError('Session expired. Please sign in again.', ERROR_CODES.SESSION_EXPIRED);
   }
 
-  const { consolidated, subjects } = parseConsolidatedFromHtml(res.data);
+  let { consolidated, subjects } = parseConsolidatedFromHtml(consolidatedHtml);
+
+  // 3. Fetch enrolled subject slots from /academics/calculate-my-attendance/slots/
+  try {
+    const slotsRes = await client.get(URLS.SLOTS_API, {
+      params: { term_id: termId },
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json, text/javascript, */*'
+      }
+    });
+
+    const slotItems = Array.isArray(slotsRes.data?.results) ? slotsRes.data.results : [];
+    if (slotItems.length > 0) {
+      const merged = slotItems.map(item => {
+        const idStr = String(item.id);
+        const label = String(item.label || '');
+        const matching = subjects.find(s => label.includes(s.id) || s.name.toLowerCase().includes(label.toLowerCase()));
+        return {
+          id: idStr,
+          name: label,
+          percentage: matching ? matching.percentage : 0
+        };
+      });
+      subjects = merged;
+    }
+  } catch (e) {
+    // Fall back to subjects from consolidated sources table
+  }
+
   return {
     batch: batchValue,
     consolidated,
@@ -293,25 +385,19 @@ async function getOverview(jar, batchValue, customAxios = null) {
   };
 }
 
-/**
- * Fetch detailed attendance rows for a specific subject
- * @param {CookieJar} jar 
- * @param {string} batchValue 
- * @param {string} subjectId 
- * @param {object} [customAxios] 
- * @returns {Promise<{ subject: string, rows: Array<object> }>}
- */
 async function getAttendance(jar, batchValue, subjectId, customAxios = null) {
   if (!batchValue) throw new PortalError('Batch parameter is required', ERROR_CODES.BATCH_NOT_FOUND);
   if (!subjectId) throw new PortalError('Subject parameter is required', ERROR_CODES.PORTAL_CHANGED);
 
   const client = createClient(jar, customAxios);
+  const resolved = resolveBatch(batchValue);
+  const termId = resolved.termId || batchValue;
 
   let res;
   try {
     res = await client.get(URLS.CALCULATE_ATTENDANCE, {
       params: {
-        term_id: batchValue,
+        term_id: termId,
         slot_id: subjectId,
         action: 'calculate'
       }
@@ -320,7 +406,7 @@ async function getAttendance(jar, batchValue, subjectId, customAxios = null) {
     throw new PortalError(`Failed to fetch subject attendance: ${err.message}`, ERROR_CODES.PORTAL_UNAVAILABLE);
   }
 
-  if (typeof res.data === 'string' && (res.data.includes('Sign in') || res.data.includes('id_password'))) {
+  if (typeof res.data === 'string' && res.data.includes('Sign in') && res.data.includes('id_password')) {
     throw new PortalError('Session expired. Please sign in again.', ERROR_CODES.SESSION_EXPIRED);
   }
 
@@ -341,6 +427,9 @@ module.exports = {
   hasCaptchaOrOtp,
   parseBatchesFromHtml,
   parseConsolidatedFromHtml,
+  normalizeBatchLabel,
+  recordBatchMapping,
+  resolveBatch,
   login,
   getOverview,
   getAttendance
