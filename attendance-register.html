@@ -206,7 +206,7 @@
   /* ---- summary ---- */
   .summary{
     display:grid;
-    grid-template-columns: 1.1fr 1fr 1fr 1fr;
+    grid-template-columns: 1.3fr 1fr 1fr;
     gap: 0;
     border: 1px solid var(--ink);
     margin-bottom: 1.8em;
@@ -425,8 +425,9 @@
     .row .subj{ grid-area: subj; }
     .row .status-cell{ grid-area: status; }
     .summary{ grid-template-columns: 1fr 1fr; }
-    .summary > div:nth-child(3){ border-left:none; border-top:1px solid var(--rule-strong); }
-    .summary > div:nth-child(4){ border-top:1px solid var(--rule-strong); }
+    .summary > div:first-child{ grid-column: 1 / -1; border-bottom: 1px solid var(--rule-strong); }
+    .summary > div:nth-child(2){ border-left: none; }
+    .summary > div:nth-child(3){ border-left: 1px solid var(--rule-strong); }
     .consolidated-box{ flex-direction:column; align-items:flex-start; }
     .target-input{ margin-left: 0; }
   }
@@ -506,10 +507,6 @@
     <div>
       <div class="big" id="absentCount" style="color:var(--absent)">–</div>
       <div class="label" style="color:var(--absent)">Absent sessions</div>
-    </div>
-    <div>
-      <div class="big" id="leaveCount" style="color:var(--leave)">–</div>
-      <div class="label" style="color:var(--leave)">Leave sessions</div>
     </div>
   </div>
 
@@ -995,7 +992,7 @@ function renderResults(){
   $('pct').textContent = st.total > 0 ? st.pct.toFixed(2) + '%' : '–';
   $('presentCount').textContent = st.present.toFixed(2);
   $('absentCount').textContent = st.absent.toFixed(2);
-  $('leaveCount').textContent = st.leave.toFixed(2);
+  if($('leaveCount')) $('leaveCount').textContent = st.leave.toFixed(2);
   $('pctStatus').innerHTML = plannerHtml(allRows, sumTarget);
 }
 
