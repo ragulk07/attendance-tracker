@@ -452,6 +452,7 @@
     <div class="hdr-right">
       <div style="display:flex; gap:0.4em; align-items:center; flex-wrap:wrap;">
         <button id="portalConnectBtn" class="portal-btn">⚡ Connect Portal</button>
+        <button id="portalSettingsBtn" class="portal-btn" title="Default Portal Credentials &amp; 1-Click Sync">⚙️ Settings</button>
         <button id="portalSignOutBtn" class="ghost tiny danger" style="display:none;">Sign out</button>
       </div>
       <div class="datestamp" id="stamp"></div>
@@ -574,6 +575,45 @@
   </div>
 </div>
 
+<!-- PORTAL SETTINGS (DEFAULT CREDENTIALS & 1-CLICK SYNC) -->
+<div class="modal" id="portalSettingsModal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.8em;">
+      <h2 style="font-family:'Source Serif 4', serif; margin:0; font-size:1.2em; font-weight:600;">⚙️ Portal Settings</h2>
+      <button class="ghost tiny" id="settingsModalClose" style="font-size:1.2em; padding:0.2em 0.5em;">&times;</button>
+    </div>
+    <p style="font-size:0.8em; color:var(--ink-soft); line-height:1.4;">Save your default credentials locally in this browser so clicking <strong>Sync</strong> updates your attendance immediately without asking for your password every time.</p>
+
+    <label class="field-label" for="settingsUsername">Default Username (Student ID)</label>
+    <input type="text" id="settingsUsername" placeholder="e.g. 24006231" autocomplete="username">
+
+    <label class="field-label" for="settingsPassword">Default Password</label>
+    <div style="display:flex; gap:0.4em; align-items:center; margin-bottom:0.9em;">
+      <input type="password" id="settingsPassword" placeholder="Portal password" style="margin-bottom:0;" autocomplete="current-password">
+      <button class="ghost tiny" type="button" id="toggleSettingsPass" style="white-space:nowrap; min-height:40px;">Show</button>
+    </div>
+
+    <label class="field-label" for="settingsBatch">Default Academic Batch</label>
+    <select id="settingsBatch" style="margin-bottom:1em;">
+      <option value="2">2627-UG-ODD-T2 (Term 14)</option>
+      <option value="3">2627-UG-ODD-T2-PLT (Term 16)</option>
+    </select>
+
+    <label style="display:flex; align-items:center; gap:0.5em; font-size:0.8em; font-weight:600; margin-bottom:1.2em; cursor:pointer;">
+      <input type="checkbox" id="settingsAutoSync" checked style="width:1.2em; height:1.2em; accent-color:var(--ink); margin:0;">
+      Enable 1-Click Direct Sync
+    </label>
+
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="ghost tiny danger" id="clearSettingsBtn">Clear Saved Settings</button>
+      <div style="display:flex; gap:0.5em;">
+        <button class="ghost" id="cancelSettingsBtn">Close</button>
+        <button id="saveSettingsBtn">Save Defaults</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- GENERIC CONFIRM / PROMPT MODAL -->
 <div class="modal" id="modal" role="dialog" aria-modal="true">
   <div class="modal-box">
@@ -591,6 +631,7 @@ const $ = id => document.getElementById(id);
 const KEY = 'attendance_v2';
 const STATUSES = ['PRESENT','ABSENT','LEAVE','HOLIDAY','UPCOMING'];
 const PORTAL_META_KEY = 'attendance_portal_meta';
+const PORTAL_SETTINGS_KEY = 'attendance_portal_settings';
 
 let sections = [];     // {id, subject, createdAt, rows[]}
 let selectedIds = [];
@@ -602,6 +643,14 @@ let portalMeta = {
   batches: [],
   consolidatedPct: null,
   lastSynced: null
+};
+
+let portalSettings = {
+  username: '',
+  password: '',
+  batch: '2',
+  batchLabel: '2627-UG-ODD-T2',
+  autoSync: true
 };
 
 $('stamp').textContent = 'Ready · ' + new Date().toLocaleDateString(undefined, {month:'short', day:'2-digit', year:'numeric'});
@@ -657,12 +706,19 @@ function load(){
     const p = JSON.parse(localStorage.getItem(PORTAL_META_KEY) || 'null');
     if(p) portalMeta = { ...portalMeta, ...p };
   }catch(e){ /* ignore */ }
+
+  try{
+    const s = JSON.parse(localStorage.getItem(PORTAL_SETTINGS_KEY) || 'null');
+    if(s) portalSettings = { ...portalSettings, ...s };
+  }catch(e){ /* ignore */ }
 }
 
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify({ sections, selectedIds, target })); }
   catch(e){ notice('Could not save: browser storage is blocked or full.', 'error'); }
   try{ localStorage.setItem(PORTAL_META_KEY, JSON.stringify(portalMeta)); }
+  catch(e){}
+  try{ localStorage.setItem(PORTAL_SETTINGS_KEY, JSON.stringify(portalSettings)); }
   catch(e){}
 }
 
@@ -987,8 +1043,10 @@ function populateBatchSelect(batches){
 
 // Login & Batch flow
 $('portalConnectBtn').addEventListener('click', () => {
-  if(portalMeta.connected && portalMeta.batch){
-    // Immediate re-sync
+  const targetBatch = portalMeta.batch || portalSettings.batch;
+  if(targetBatch && portalSettings.username && portalSettings.password && portalSettings.autoSync){
+    syncBatch(targetBatch);
+  } else if(portalMeta.connected && portalMeta.batch){
     syncBatch(portalMeta.batch);
   } else {
     openPortalModal();
@@ -997,7 +1055,90 @@ $('portalConnectBtn').addEventListener('click', () => {
 $('portalModalClose').addEventListener('click', closePortalModal);
 $('portalLoginCancel').addEventListener('click', closePortalModal);
 $('resyncBtn').addEventListener('click', () => {
-  if(portalMeta.batch) syncBatch(portalMeta.batch);
+  const targetBatch = portalMeta.batch || portalSettings.batch;
+  if(targetBatch) syncBatch(targetBatch);
+  else openPortalModal();
+});
+
+// Settings Modal handlers
+function openSettingsModal(){
+  $('settingsUsername').value = portalSettings.username || portalMeta.username || '';
+  $('settingsPassword').value = portalSettings.password || '';
+  $('settingsPassword').type = 'password';
+  $('toggleSettingsPass').textContent = 'Show';
+  $('settingsAutoSync').checked = portalSettings.autoSync !== false;
+
+  const batchSel = $('settingsBatch');
+  if(portalMeta.batches && portalMeta.batches.length > 0){
+    batchSel.innerHTML = portalMeta.batches.map(b => `<option value="${esc(b.value)}">${esc(b.label)}</option>`).join('');
+  }
+  if(portalSettings.batch){
+    batchSel.value = portalSettings.batch;
+  }
+  $('portalSettingsModal').style.display = 'flex';
+}
+
+function closeSettingsModal(){
+  $('portalSettingsModal').style.display = 'none';
+}
+
+$('portalSettingsBtn').addEventListener('click', openSettingsModal);
+$('settingsModalClose').addEventListener('click', closeSettingsModal);
+$('cancelSettingsBtn').addEventListener('click', closeSettingsModal);
+
+$('toggleSettingsPass').addEventListener('click', () => {
+  const passInp = $('settingsPassword');
+  const btn = $('toggleSettingsPass');
+  if(passInp.type === 'password'){
+    passInp.type = 'text';
+    btn.textContent = 'Hide';
+  } else {
+    passInp.type = 'password';
+    btn.textContent = 'Show';
+  }
+});
+
+$('saveSettingsBtn').addEventListener('click', () => {
+  const u = $('settingsUsername').value.trim();
+  const p = $('settingsPassword').value;
+  const bSel = $('settingsBatch');
+  const b = bSel.value;
+  const bOpt = bSel.options[bSel.selectedIndex];
+  const bLabel = bOpt ? bOpt.textContent : b;
+  const auto = $('settingsAutoSync').checked;
+
+  portalSettings = {
+    username: u,
+    password: p,
+    batch: b,
+    batchLabel: bLabel,
+    autoSync: auto
+  };
+
+  if(!portalMeta.batch && b){
+    portalMeta.batch = b;
+    portalMeta.batchLabel = bLabel;
+  }
+
+  save();
+  closeSettingsModal();
+  notice('Default settings saved! 1-click direct sync is active.', 'ok');
+  renderConsolidated();
+});
+
+$('clearSettingsBtn').addEventListener('click', async () => {
+  if(!(await dialog({ message: 'Clear all saved default portal credentials?', okLabel: 'Clear', danger: true }))) return;
+  portalSettings = {
+    username: '',
+    password: '',
+    batch: '',
+    batchLabel: '',
+    autoSync: false
+  };
+  save();
+  closeSettingsModal();
+  notice('Saved settings cleared.', 'ok');
+  renderConsolidated();
 });
 
 $('portalBatchBack').addEventListener('click', () => {
@@ -1113,10 +1254,29 @@ async function syncBatch(batchValue){
     render();
     notice(`Synced ${updatedCount} subject${updatedCount===1?'':'s'} successfully!`, 'ok');
   } catch(err){
-    notice('Sync failed: ' + err.message, 'error');
-    if(err.message.includes('Session expired')){
-      openPortalModal();
+    if(err.message.includes('Session expired') || err.message.includes('No active session')){
+      if(portalSettings.username && portalSettings.password && portalSettings.autoSync){
+        notice('Auto-authenticating with default settings…', 'ok');
+        try{
+          const loginRes = await apiPost('/api/login', {
+            username: portalSettings.username,
+            password: portalSettings.password
+          });
+          portalMeta.connected = true;
+          portalMeta.batches = loginRes.batches || [];
+          save();
+          return syncBatch(batchValue);
+        } catch(loginErr){
+          notice('Auto-login failed: ' + loginErr.message, 'error');
+          openPortalModal();
+          return;
+        }
+      } else {
+        openPortalModal();
+        return;
+      }
     }
+    notice('Sync failed: ' + err.message, 'error');
   } finally {
     connectBtn.classList.remove('syncing');
   }
