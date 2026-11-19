@@ -811,13 +811,15 @@ function plannerHtml(rows, tgt){
 }
 
 /* ---------- render: banner & cards ---------- */
+const calculateAttendanceStats = stats;
+
 function calculateConsolidatedStats(){
   let totalPresent = 0;
   let totalScheduled = 0;
 
   for(const sec of sections){
     if(!sec.rows || !sec.rows.length) continue;
-    const st = calculateAttendanceStats(sec.rows);
+    const st = stats(sec.rows);
     totalPresent += st.present;
     totalScheduled += (st.present + st.absent + st.leave);
   }
@@ -836,8 +838,8 @@ function renderConsolidated(){
   const stickyPct = $('stickyPct');
   $('stickyTarget').textContent = target;
 
-  const stats = calculateConsolidatedStats();
-  const hasStats = stats.scheduled > 0;
+  const conStats = calculateConsolidatedStats();
+  const hasStats = conStats.scheduled > 0;
   const hasPortalPct = portalMeta.consolidatedPct !== null && portalMeta.consolidatedPct > 0;
 
   if(hasStats || hasPortalPct || portalMeta.connected){
@@ -845,7 +847,7 @@ function renderConsolidated(){
     sticky.style.display = 'flex';
 
     // Prioritize computed stats from enrolled sections (reflects live edits and exact calculations)
-    const pct = hasStats ? stats.percentage : (portalMeta.consolidatedPct || 0);
+    const pct = hasStats ? conStats.percentage : (portalMeta.consolidatedPct || 0);
     const valEl = $('conPctVal');
     valEl.textContent = pct.toFixed(2) + '%';
     const cls = pct >= target ? 'pct-good' : (pct >= target - 5 ? 'pct-tight' : 'pct-bad');
@@ -857,7 +859,7 @@ function renderConsolidated(){
     const ratioEl = $('conRatio');
     if(ratioEl){
       if(hasStats){
-        ratioEl.textContent = `· ${stats.present.toFixed(0)} present weight / ${stats.scheduled.toFixed(0)} scheduled weight`;
+        ratioEl.textContent = `· ${conStats.present.toFixed(0)} present weight / ${conStats.scheduled.toFixed(0)} scheduled weight`;
       } else {
         ratioEl.textContent = '';
       }
