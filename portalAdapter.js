@@ -172,11 +172,17 @@ function parseConsolidatedFromHtml(html) {
     return { consolidated: { percentage: 0 }, subjects: [] };
   }
   const $ = cheerio.load(html);
-  const pctText = $(SELECTORS.CONSOLIDATED_PERCENTAGE).text().trim();
-  const pctMatch = pctText.match(/([\d.]+)%/);
-  const percentage = pctMatch ? parseFloat(pctMatch[1]) : 0;
+  const pctEl = $(SELECTORS.CONSOLIDATED_PERCENTAGE).length > 0
+    ? $(SELECTORS.CONSOLIDATED_PERCENTAGE)
+    : $('.ca-percentage');
+  const pctText = pctEl.text().trim();
+  const pctMatch = pctText.match(/([\d.]+)%?/);
+  let percentage = pctMatch ? parseFloat(pctMatch[1]) : 0;
 
   const subjects = [];
+  let totalPresent = 0;
+  let totalScheduled = 0;
+
   $(SELECTORS.CONSOLIDATED_TABLE_ROWS).each((_, tr) => {
     const cells = $(tr).find('td');
     if (cells.length < 7) return;
@@ -190,6 +196,9 @@ function parseConsolidatedFromHtml(html) {
     const scheduledWeight = parseFloat($(cells[6]).text().trim()) || 0;
     const subjPct = scheduledWeight > 0 ? (presentWeight / scheduledWeight) * 100 : 0;
 
+    totalPresent += presentWeight;
+    totalScheduled += scheduledWeight;
+
     if (code || name) {
       subjects.push({
         id: code,
@@ -198,6 +207,11 @@ function parseConsolidatedFromHtml(html) {
       });
     }
   });
+
+  // If consolidated percentage is missing from HTML header but present in the sources table
+  if (percentage === 0 && totalScheduled > 0) {
+    percentage = Math.round((totalPresent / totalScheduled) * 10000) / 100;
+  }
 
   return {
     consolidated: { percentage },
@@ -319,17 +333,40 @@ async function getOverview(jar, batchValue, customAxios = null) {
       params: { consolidated_attendance_id: conId },
       headers: {
         'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'text/html,application/xhtml+xml,application/json,*/*'
+        'Accept': 'text/html,application/xhtml+xml,application/json,*/*',
+        'Referer': URLS.VIEW_CONSOLIDATED
       }
     });
 
     if (typeof dataRes.data === 'string') {
       consolidatedHtml = dataRes.data;
     } else if (typeof dataRes.data === 'object' && dataRes.data !== null) {
-      consolidatedHtml = dataRes.data.html || dataRes.data.content || JSON.stringify(dataRes.data);
+      if (typeof dataRes.data.percentage === 'number') {
+        consolidatedHtml = `<h2 id="ca-percentage">${dataRes.data.percentage}%</h2>`;
+      } else {
+        consolidatedHtml = dataRes.data.html || dataRes.data.content || JSON.stringify(dataRes.data);
+      }
     }
   } catch (err) {
-    // Silently proceed to page fallback
+    // Attempt POST to data endpoint if GET was rejected
+    try {
+      const postRes = await client.post(URLS.CONSOLIDATED_DATA, `consolidated_attendance_id=${encodeURIComponent(conId)}`, {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Referer': URLS.VIEW_CONSOLIDATED
+        }
+      });
+      if (typeof postRes.data === 'string') {
+        consolidatedHtml = postRes.data;
+      } else if (typeof postRes.data === 'object' && postRes.data !== null) {
+        if (typeof postRes.data.percentage === 'number') {
+          consolidatedHtml = `<h2 id="ca-percentage">${postRes.data.percentage}%</h2>`;
+        } else {
+          consolidatedHtml = postRes.data.html || postRes.data.content || JSON.stringify(postRes.data);
+        }
+      }
+    } catch (e2) {}
   }
 
   // 2. If data endpoint didn't provide HTML with ca-percentage, fetch main page

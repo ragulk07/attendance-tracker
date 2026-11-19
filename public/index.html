@@ -582,7 +582,7 @@
       <h2 style="font-family:'Source Serif 4', serif; margin:0; font-size:1.2em; font-weight:600;">⚙️ Portal Settings</h2>
       <button class="ghost tiny" id="settingsModalClose" style="font-size:1.2em; padding:0.2em 0.5em;">&times;</button>
     </div>
-    <p style="font-size:0.8em; color:var(--ink-soft); line-height:1.4;">Save your default credentials locally in this browser so clicking <strong>Sync</strong> updates your attendance immediately without asking for your password every time.</p>
+    <p style="font-size:0.8em; color:var(--ink-soft); line-height:1.4;">Save your default credentials locally in this browser so opening the site or clicking <strong>Sync</strong> updates your attendance immediately without asking for your password every time.</p>
 
     <label class="field-label" for="settingsUsername">Default Username (Student ID)</label>
     <input type="text" id="settingsUsername" placeholder="e.g. 24006231" autocomplete="username">
@@ -601,7 +601,7 @@
 
     <label style="display:flex; align-items:center; gap:0.5em; font-size:0.8em; font-weight:600; margin-bottom:1.2em; cursor:pointer;">
       <input type="checkbox" id="settingsAutoSync" checked style="width:1.2em; height:1.2em; accent-color:var(--ink); margin:0;">
-      Enable 1-Click Direct Sync
+      Enable 1-Click Direct Sync &amp; Auto-Sync on Open
     </label>
 
     <div class="modal-actions" style="justify-content:space-between;">
@@ -811,16 +811,41 @@ function plannerHtml(rows, tgt){
 }
 
 /* ---------- render: banner & cards ---------- */
+function calculateConsolidatedStats(){
+  let totalPresent = 0;
+  let totalScheduled = 0;
+
+  for(const sec of sections){
+    if(!sec.rows || !sec.rows.length) continue;
+    const st = calculateAttendanceStats(sec.rows);
+    totalPresent += st.present;
+    totalScheduled += (st.present + st.absent + st.leave);
+  }
+
+  const pct = totalScheduled > 0 ? (totalPresent / totalScheduled) * 100 : (portalMeta.consolidatedPct || 0);
+  return {
+    percentage: pct,
+    present: totalPresent,
+    scheduled: totalScheduled
+  };
+}
+
 function renderConsolidated(){
   const banner = $('consolidatedBanner');
   const sticky = $('stickyBar');
   const stickyPct = $('stickyPct');
   $('stickyTarget').textContent = target;
 
-  if(portalMeta.consolidatedPct !== null){
-    const pct = portalMeta.consolidatedPct;
+  const stats = calculateConsolidatedStats();
+  const hasStats = stats.scheduled > 0;
+  const hasPortalPct = portalMeta.consolidatedPct !== null && portalMeta.consolidatedPct > 0;
+
+  if(hasStats || hasPortalPct || portalMeta.connected){
     banner.style.display = 'flex';
     sticky.style.display = 'flex';
+
+    // Prioritize computed stats from enrolled sections (reflects live edits and exact calculations)
+    const pct = hasStats ? stats.percentage : (portalMeta.consolidatedPct || 0);
     const valEl = $('conPctVal');
     valEl.textContent = pct.toFixed(2) + '%';
     const cls = pct >= target ? 'pct-good' : (pct >= target - 5 ? 'pct-tight' : 'pct-bad');
@@ -828,6 +853,15 @@ function renderConsolidated(){
     stickyPct.textContent = pct.toFixed(1) + '%';
     stickyPct.className = cls;
     $('conBatchTag').textContent = portalMeta.batchLabel || (portalMeta.batch ? `Batch ${portalMeta.batch}` : 'Batch Active');
+
+    const ratioEl = $('conRatio');
+    if(ratioEl){
+      if(hasStats){
+        ratioEl.textContent = `· ${stats.present.toFixed(0)} present weight / ${stats.scheduled.toFixed(0)} scheduled weight`;
+      } else {
+        ratioEl.textContent = '';
+      }
+    }
   } else {
     banner.style.display = 'none';
     sticky.style.display = 'none';
@@ -1433,6 +1467,15 @@ $('importFile').addEventListener('change', (e) => {
 // Boot
 load();
 render();
+
+// Auto-sync when opening website if default settings exist
+if(portalSettings && portalSettings.autoSync !== false && portalSettings.username && portalSettings.password){
+  const targetBatch = portalSettings.batch || portalMeta.batch || '2';
+  setTimeout(() => {
+    notice(`Auto-syncing attendance for ${portalSettings.batchLabel || targetBatch}…`);
+    syncBatch(targetBatch);
+  }, 400);
+}
 </script>
 </body>
 </html>
