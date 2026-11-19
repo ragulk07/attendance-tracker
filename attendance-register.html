@@ -449,6 +449,8 @@
     font-size: 0.82em;
     color: var(--ink-soft);
     font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .target-input input {
     width: 3.8em;
@@ -615,7 +617,7 @@
     border-top: 1px solid var(--border);
   }
 
-  .tgt { display: flex; align-items: center; gap: 0.4em; font-size: 0.74em; color: var(--ink-soft); font-weight: 600; }
+  .tgt { display: flex; align-items: center; gap: 0.4em; font-size: 0.74em; color: var(--ink-soft); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
   .tgt input { width: 3.5em; font-family: 'JetBrains Mono', monospace; font-size: 1em; background: var(--card-raised); border: 1px solid var(--border); border-radius: 6px; padding: 0.25em 0.3em; color: var(--ink); text-align: center; margin: 0; }
 
   /* ---- table ---- */
@@ -880,7 +882,7 @@
     <div style="display:flex; align-items:center; gap:0.8em; flex-wrap:wrap;">
       <button class="portal-btn" id="resyncBtn">🔄 Sync Attendance</button>
       <div class="target-input">
-        Target %<input type="number" id="target" value="75" min="1" max="100">
+        Target&nbsp;%<input type="number" id="target" value="75" min="1" max="100">
       </div>
     </div>
   </div>
@@ -1328,7 +1330,7 @@ function renderCards(){
         </div>
       </div>
       <div class="card-actions">
-        <label class="tgt">Target %<input type="number" data-act="target" min="1" max="100" value="${s.target || ''}" placeholder="${target}"></label>
+        <label class="tgt">Target&nbsp;%<input type="number" data-act="target" min="1" max="100" value="${s.target || ''}" placeholder="${target}"></label>
         <button class="ghost tiny" data-act="reset-portal" title="Reset changes made to this subject">Reset edits</button>
         <button class="ghost tiny danger" data-act="delete">Delete</button>
       </div>
