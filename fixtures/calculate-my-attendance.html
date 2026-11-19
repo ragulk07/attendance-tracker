@@ -1,0 +1,100 @@
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Saveetha Engineering College</title>
+</head>
+<body class="sb-nav-fixed">
+<div class="container-fluid px-4">
+  <div class="d-flex flex-wrap align-items-center justify-content-between mt-4 mb-3 gap-2">
+    <div>
+      <h1 class="mb-1">Calculate My Attendance</h1>
+      <p class="text-muted mb-0">Live attendance calculation for enrolled academic subject slots.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="/academics/services/">Back to Services</a>
+  </div>
+
+  <form class="card mb-4" method="get" id="calculate-my-attendance-form" data-slots-url="/academics/calculate-my-attendance/slots/">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6 col-lg-4">
+          <label class="form-label" for="calculate-my-attendance-term">Academic Term</label>
+          <select class="form-select" id="calculate-my-attendance-term" name="term_id">
+            <option value="">Select Academic Term</option>
+            <option value="16" selected="">26-27-ODD-T2-PLT</option>
+            <option value="14">26-27-ODD-T2</option>
+            <option value="12">26-27-ODD-JR</option>
+            <option value="11">26-27-PG-ODD</option>
+            <option value="10">26-27-ODD-HOSTEL</option>
+            <option value="8">26-27-ODD-T1</option>
+            <option value="7">25-26-EVEN-T2-TRAINING</option>
+            <option value="3">25-26 EVEN T2</option>
+          </select>
+        </div>
+        <div class="col-md-6 col-lg-5">
+          <label class="form-label" for="calculate-my-attendance-slot">Enrolled Subject Slot</label>
+          <select class="form-select" id="calculate-my-attendance-slot" name="slot_id" data-selected-slot="" disabled="">
+            <option value="">Select Subject Slot</option>
+          </select>
+        </div>
+        <div class="col-lg-3 d-flex justify-content-end gap-2">
+          <a class="btn btn-outline-secondary" href="/academics/calculate-my-attendance/">Reset</a>
+          <button class="btn btn-primary" type="submit" name="action" value="calculate">Calculate</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const form = document.getElementById("calculate-my-attendance-form");
+    const termSelect = document.getElementById("calculate-my-attendance-term");
+    const slotSelect = document.getElementById("calculate-my-attendance-slot");
+    const slotsUrl = form.dataset.slotsUrl;
+
+    function renderSlots(results, selectedSlot) {
+      slotSelect.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Select Subject Slot";
+      slotSelect.appendChild(placeholder);
+
+      results.forEach(function (item) {
+        const option = document.createElement("option");
+        option.value = String(item.id);
+        option.textContent = item.label;
+        if (selectedSlot && String(item.id) === String(selectedSlot)) {
+          option.selected = true;
+        }
+        slotSelect.appendChild(option);
+      });
+      slotSelect.disabled = !termSelect.value;
+    }
+
+    async function loadSlots(selectedSlot) {
+      if (!termSelect.value) {
+        renderSlots([], "");
+        slotSelect.disabled = true;
+        return;
+      }
+      slotSelect.disabled = true;
+      const url = new URL(slotsUrl, window.location.origin);
+      url.searchParams.set("term_id", termSelect.value);
+      const response = await fetch(url.toString(), {
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+        credentials: "same-origin"
+      });
+      if (!response.ok) {
+        renderSlots([], "");
+        return;
+      }
+      const payload = await response.json();
+      renderSlots(payload.results || [], selectedSlot || "");
+    }
+
+    termSelect.addEventListener("change", function () {
+      loadSlots("");
+    });
+  });
+</script>
+</body>
+</html>
