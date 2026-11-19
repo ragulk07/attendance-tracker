@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: attendance-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ALLOWED_USERNAMES
+        sync: false
