@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none">
+  <defs>
+    <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="cap-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0e7ff"/>
+    </linearGradient>
+    <filter id="logo-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#4f46e5" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <!-- Background squircle -->
+  <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#logo-grad)" filter="url(#logo-shadow)"/>
+  
+  <!-- Graduation cap top -->
+  <path d="M24 13L36 19L24 25L12 19L24 13Z" fill="url(#cap-grad)"/>
+  <!-- Cap base -->
+  <path d="M16 21.2V26.5C16 28.5 19.5 30.5 24 30.5C28.5 30.5 32 28.5 32 26.5V21.2L24 25.2L16 21.2Z" fill="#c7d2fe"/>
+  <!-- Tassel -->
+  <path d="M33 20V27C33 27.5 33.5 28 34 28C34.5 28 35 27.5 35 27V19.5" stroke="#fed7aa" stroke-width="1.5" stroke-linecap="round"/>
+  <circle cx="34" cy="28.5" r="1.2" fill="#fb923c"/>
+  
+  <!-- Checkmark badge -->
+  <circle cx="33" cy="33" r="8" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
+  <path d="M29.5 33L32 35.5L36.5 30.5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

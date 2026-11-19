@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Attendance Register</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -164,6 +166,18 @@
     margin-bottom: 2em;
     flex-wrap: wrap;
     gap: 1.2em;
+  }
+
+  .app-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    filter: drop-shadow(0 4px 10px rgba(79, 70, 229, 0.25));
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .app-logo:hover {
+    transform: scale(1.06) rotate(-2deg);
   }
 
   .brand-badge {
@@ -837,7 +851,21 @@
 <body>
 
 <div id="stickyBar" class="sticky-bar" style="display:none;">
-  <div class="brand">Attendance Register</div>
+  <div class="brand">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="22" height="22" fill="none" style="vertical-align:middle; flex-shrink:0;">
+      <defs>
+        <linearGradient id="sticky-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#4f46e5"/>
+          <stop offset="100%" stop-color="#06b6d4"/>
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="44" height="44" rx="10" fill="url(#sticky-logo-grad)"/>
+      <path d="M24 13L36 19L24 25L12 19L24 13Z" fill="#ffffff"/>
+      <circle cx="33" cy="33" r="7" fill="#10b981"/>
+      <path d="M30 33L32 35L35.5 31" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Attendance Register
+  </div>
   <div class="stats">
     Consolidated: <span id="stickyPct" class="pct-good">–%</span>
     <span style="font-weight:400; color:var(--ink-soft); font-size:0.9em;">(Target <span id="stickyTarget">75</span>%)</span>
@@ -847,10 +875,34 @@
 <div class="wrap">
 
   <header>
-    <div>
-      <div class="brand-badge"><span class="brand-dot"></span> Saveetha Portal</div>
-      <h1>Attendance Register</h1>
-      <div class="subtitle">Direct Saveetha Learner Portal Integration &amp; Simulator</div>
+    <div style="display:flex; align-items:center; gap:1.1em;">
+      <div class="app-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="50" height="50" fill="none">
+          <defs>
+            <linearGradient id="logo-grad-hdr" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#4f46e5"/>
+              <stop offset="50%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#06b6d4"/>
+            </linearGradient>
+            <linearGradient id="cap-grad-hdr" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#ffffff"/>
+              <stop offset="100%" stop-color="#e0e7ff"/>
+            </linearGradient>
+          </defs>
+          <rect x="2" y="2" width="44" height="44" rx="13" fill="url(#logo-grad-hdr)"/>
+          <path d="M24 13L36 19L24 25L12 19L24 13Z" fill="url(#cap-grad-hdr)"/>
+          <path d="M16 21.2V26.5C16 28.5 19.5 30.5 24 30.5C28.5 30.5 32 28.5 32 26.5V21.2L24 25.2L16 21.2Z" fill="#c7d2fe"/>
+          <path d="M33 20V27C33 27.5 33.5 28 34 28C34.5 28 35 27.5 35 27V19.5" stroke="#fed7aa" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="34" cy="28.5" r="1.2" fill="#fb923c"/>
+          <circle cx="33" cy="33" r="8" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
+          <path d="M29.5 33L32 35.5L36.5 30.5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-badge"><span class="brand-dot"></span> Saveetha Portal</div>
+        <h1>Attendance Register</h1>
+        <div class="subtitle">Direct Saveetha Learner Portal Integration &amp; Simulator</div>
+      </div>
     </div>
     <div class="hdr-right">
       <div style="display:flex; gap:0.4em; align-items:center; flex-wrap:wrap;">
