@@ -1,0 +1,34 @@
+name: Render Keep-Alive Ping
+
+on:
+  schedule:
+    # Runs every 14 minutes (Render free tier sleeps after 15 min of inactivity)
+    - cron: '*/14 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render /healthz
+        run: |
+          TARGET="${{ secrets.RENDER_APP_URL || vars.RENDER_APP_URL }}"
+          if [ -z "$TARGET" ]; then
+            echo "No RENDER_APP_URL configured yet. Add it to GitHub Repo Settings -> Secrets/Variables."
+            exit 0
+          fi
+          
+          TARGET="${TARGET%/}"
+          if [[ "$TARGET" != *"/healthz"* ]]; then
+            TARGET="$TARGET/healthz"
+          fi
+          
+          echo "Pinging $TARGET ..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$TARGET")
+          echo "Response code: $HTTP_CODE"
+          
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "Render server is awake and healthy!"
+          else
+            echo "Server responded with status $HTTP_CODE"
+          fi
