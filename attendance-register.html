@@ -298,6 +298,17 @@
     background: var(--card-bg);
     color: var(--ink);
     padding: 0.55em 1em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    transition: all 0.15s ease;
+  }
+  .portal-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .portal-btn:active:not(:disabled) {
+    transform: translateY(0);
   }
   .portal-btn.connected {
     background: var(--present-bg);
@@ -308,6 +319,17 @@
     background: var(--primary-bg);
     color: var(--primary);
     border-color: var(--primary-border);
+    opacity: 0.85;
+    cursor: wait !important;
+    pointer-events: none;
+  }
+  .sync-spin {
+    display: inline-block;
+    animation: spin-anim 0.85s linear infinite;
+  }
+  @keyframes spin-anim {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   /* ---- panels ---- */
@@ -869,6 +891,7 @@
   <div class="stats">
     Consolidated: <span id="stickyPct" class="pct-good">–%</span>
     <span style="font-weight:400; color:var(--ink-soft); font-size:0.9em;">(Target <span id="stickyTarget">75</span>%)</span>
+    <button class="portal-btn" id="stickySyncBtn" style="padding:0.3em 0.7em; font-size:0.85em; margin-left:0.6em;" title="Quick Sync">🔄 Sync</button>
   </div>
 </div>
 
@@ -945,6 +968,7 @@
       <h2>Enrolled Subjects</h2>
       <span class="count" id="selCount">Click a subject card to view its register</span>
       <span class="tools">
+        <button class="ghost tiny" id="resetOverridesBtn" title="Clear all simulated edits and restore official portal attendance">Reset Simulations</button>
         <button class="ghost tiny" id="exportBtn">Export backup</button>
         <button class="ghost tiny" id="importBtn">Import backup</button>
         <input type="file" id="importFile" accept="application/json,.json" style="display:none">
@@ -1489,9 +1513,29 @@ function getOverrideKey(batch, subjectId, date, time){
 function saveOverride(batch, subjectId, date, time, status){
   try{ localStorage.setItem(getOverrideKey(batch, subjectId, date, time), status); }catch(e){}
 }
+function clearOverride(batch, subjectId, date, time){
+  try{ localStorage.removeItem(getOverrideKey(batch, subjectId, date, time)); }catch(e){}
+}
 function applyOverrides(batch, subjectId, rows){
   return rows.map(r => {
-    const saved = localStorage.getItem(getOverrideKey(batch, subjectId, r.date, r.time));
+    const key = getOverrideKey(batch, subjectId, r.date, r.time);
+    const saved = localStorage.getItem(key);
+
+    // If the portal row has a confirmed status (PRESENT, ABSENT, LEAVE, HOLIDAY)
+    if(r.originalStatus !== 'UPCOMING' && r.status !== 'UPCOMING'){
+      // Stale UPCOMING override must never overwrite live portal attendance!
+      if(saved === 'UPCOMING'){
+        try{ localStorage.removeItem(key); }catch(e){}
+        return { ...r };
+      }
+      // If user specifically simulated an edit on a past row, keep it unless it is UPCOMING
+      if(saved && STATUSES.includes(saved) && saved !== 'UPCOMING'){
+        return { ...r, status: saved };
+      }
+      return { ...r };
+    }
+
+    // Portal row is UPCOMING: simulation override applies
     if(saved && STATUSES.includes(saved)){
       return { ...r, status: saved };
     }
@@ -1512,8 +1556,15 @@ async function apiPost(url, body){
 }
 
 async function apiGet(url){
-  const res = await fetch(url, {
-    headers: { 'Accept': 'application/json' }
+  const sep = url.includes('?') ? '&' : '?';
+  const bustUrl = `${url}${sep}_t=${Date.now()}`;
+  const res = await fetch(bustUrl, {
+    cache: 'no-store',
+    headers: {
+      'Accept': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache'
+    }
   });
   const data = await res.json();
   if(!res.ok){
@@ -1572,6 +1623,13 @@ $('resyncBtn').addEventListener('click', () => {
   if(targetBatch) syncBatch(targetBatch);
   else openPortalModal();
 });
+if($('stickySyncBtn')){
+  $('stickySyncBtn').addEventListener('click', () => {
+    const targetBatch = portalMeta.batch || portalSettings.batch;
+    if(targetBatch) syncBatch(targetBatch);
+    else openPortalModal();
+  });
+}
 
 // Settings Modal handlers
 function openSettingsModal(){
@@ -1722,15 +1780,37 @@ $('portalBatchSync').addEventListener('click', () => {
   syncBatch(chosenBatch);
 });
 
+function setSyncingState(isSyncing, label){
+  const btns = [$('portalConnectBtn'), $('resyncBtn'), $('stickySyncBtn')].filter(Boolean);
+  btns.forEach(btn => {
+    if(isSyncing){
+      btn.classList.add('syncing');
+      btn.disabled = true;
+      if(!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
+      btn.innerHTML = `<span class="sync-spin">🔄</span> ${label || 'Syncing…'}`;
+    } else {
+      btn.classList.remove('syncing');
+      btn.disabled = false;
+      delete btn.dataset.origHtml;
+    }
+  });
+  if(!isSyncing){
+    renderConsolidated();
+  }
+}
+
 async function syncBatch(batchValue){
   const targetBatch = batchValue || portalMeta.batch || portalSettings.batch || '2';
-  notice(`Syncing attendance for ${portalMeta.batchLabel || portalSettings.batchLabel || targetBatch}…`);
-  const connectBtn = $('portalConnectBtn');
-  connectBtn.classList.add('syncing');
+  const label = portalMeta.batchLabel || portalSettings.batchLabel || `Batch ${targetBatch}`;
+  const startTime = Date.now();
+
+  setSyncingState(true, 'Syncing…');
+  notice(`Syncing attendance for ${label}…`);
 
   try{
     // If not connected and we have saved credentials, auto-authenticate first
     if(!portalMeta.connected && portalSettings.username && portalSettings.password){
+      setSyncingState(true, 'Signing in…');
       try{
         const loginRes = await apiPost('/api/login', {
           username: portalSettings.username,
@@ -1745,12 +1825,14 @@ async function syncBatch(batchValue){
     }
 
     // 1. Fetch overview
+    setSyncingState(true, 'Getting subjects…');
     let overview;
     try {
       overview = await apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`);
     } catch(err){
       if((err.message.includes('Session expired') || err.message.includes('No active session')) &&
          portalSettings.username && portalSettings.password){
+        setSyncingState(true, 'Re-authenticating…');
         notice('Authenticating with Saveetha portal…', 'ok');
         const loginRes = await apiPost('/api/login', {
           username: portalSettings.username,
@@ -1773,36 +1855,59 @@ async function syncBatch(batchValue){
     const portalSubjects = overview.subjects || [];
     if(portalSubjects.length === 0){
       notice('No enrolled subjects found in this batch.', 'error');
-      connectBtn.classList.remove('syncing');
+      setSyncingState(false);
       save(); render();
       return;
     }
 
-    // 2. Fetch attendance rows for each enrolled subject
-    let updatedCount = 0;
-    for(const subj of portalSubjects){
-      try{
+    // 2. Fetch all enrolled subject slots IN PARALLEL for maximum speed and efficiency
+    setSyncingState(true, `Syncing ${portalSubjects.length} subjects…`);
+    notice(`Fetching live attendance for ${portalSubjects.length} subjects in parallel…`);
+
+    const results = await Promise.allSettled(
+      portalSubjects.map(async subj => {
         const attData = await apiGet(`/api/attendance?batch=${encodeURIComponent(targetBatch)}&subject=${encodeURIComponent(subj.id)}`);
-        const rowsWithOverrides = applyOverrides(targetBatch, subj.id, attData.rows || []);
+        return { subj, attData };
+      })
+    );
+
+    let updatedCount = 0;
+    for(const res of results){
+      if(res.status === 'fulfilled'){
+        const { subj, attData } = res.value;
+        const rawRows = attData.rows || [];
+
+        // Clean stale 'UPCOMING' overrides for any rows that the college portal has now confirmed
+        rawRows.forEach(r => {
+          if(r.status !== 'UPCOMING'){
+            const key = getOverrideKey(targetBatch, subj.id, r.date, r.time);
+            const saved = localStorage.getItem(key);
+            if(saved === 'UPCOMING'){
+              try { localStorage.removeItem(key); } catch(e){}
+            }
+          }
+        });
+
+        const rowsWithOverrides = applyOverrides(targetBatch, subj.id, rawRows);
 
         const existing = sections.find(s => s.id === subj.id || s.subject.toLowerCase() === subj.name.toLowerCase());
         if(existing){
           existing.id = subj.id;
           existing.subject = subj.name;
           existing.rows = rowsWithOverrides;
-          existing.portalOriginalRows = attData.rows || [];
+          existing.portalOriginalRows = rawRows;
         } else {
           sections.push({
             id: subj.id,
             subject: subj.name,
             createdAt: Date.now(),
             rows: rowsWithOverrides,
-            portalOriginalRows: attData.rows || []
+            portalOriginalRows: rawRows
           });
         }
         updatedCount++;
-      } catch(e){
-        console.warn(`Could not fetch details for ${subj.name}:`, e.message);
+      } else {
+        console.warn('Subject sync failed:', res.reason?.message);
       }
     }
 
@@ -1810,9 +1915,10 @@ async function syncBatch(batchValue){
       selectedIds = [sections[0].id];
     }
 
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     save();
     render();
-    notice(`Synced ${updatedCount} subject${updatedCount===1?'':'s'} successfully!`, 'ok');
+    notice(`⚡ Attendance synced successfully (${updatedCount} subjects in ${duration}s)!`, 'ok');
   } catch(err){
     if(err.message.includes('Session expired') || err.message.includes('No active session')){
       openPortalModal();
@@ -1821,7 +1927,7 @@ async function syncBatch(batchValue){
       notice('Sync failed: ' + err.message, 'error');
     }
   } finally {
-    connectBtn.classList.remove('syncing');
+    setSyncingState(false);
   }
 }
 
@@ -1934,6 +2040,40 @@ $('tableArea').addEventListener('change', (e) => {
 });
 
 /* ---------- export & import backup ---------- */
+if($('resetOverridesBtn')){
+  $('resetOverridesBtn').addEventListener('click', async () => {
+    if(!(await dialog({
+      message: 'Reset all simulated attendance edits and reload official portal records?',
+      okLabel: 'Reset to Portal',
+      danger: true
+    }))) return;
+
+    try{
+      const toRemove = [];
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith('override_')) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+    }catch(e){}
+
+    sections.forEach(s => {
+      if(s.portalOriginalRows && s.portalOriginalRows.length){
+        s.rows = JSON.parse(JSON.stringify(s.portalOriginalRows));
+      }
+    });
+
+    save();
+    render();
+    notice('All simulations cleared. Showing official portal records.', 'ok');
+
+    const targetBatch = portalMeta.batch || portalSettings.batch;
+    if(targetBatch){
+      syncBatch(targetBatch);
+    }
+  });
+}
+
 $('exportBtn').addEventListener('click', () => {
   if(!sections.length){ notice('Nothing to export yet.', 'error'); return; }
   const blob = new Blob([JSON.stringify({ version: 2, sections, portalMeta }, null, 2)], { type:'application/json' });

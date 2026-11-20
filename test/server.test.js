@@ -43,6 +43,7 @@ test('Protected routes reject unauthorized requests with SESSION_EXPIRED', async
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/overview?batch=3`);
     assert.equal(res.status, 401);
+    assert.ok(res.headers.get('cache-control')?.includes('no-store'));
     const body = await res.json();
     assert.equal(body.code, 'SESSION_EXPIRED');
   } finally {

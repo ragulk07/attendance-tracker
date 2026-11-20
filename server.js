@@ -113,6 +113,14 @@ function requireAuth(req, res, next) {
 // API ROUTES
 // ═══════════════════════════════════════════════════════════════════
 
+// Disable caching for all API endpoints so live portal attendance is always fresh
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
 // Health check endpoint
 app.get('/healthz', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
