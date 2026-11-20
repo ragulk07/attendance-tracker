@@ -1363,7 +1363,17 @@ function renderConsolidated(){
 
   // Update header buttons
   const btn = $('portalConnectBtn');
+  const resyncBtn = $('resyncBtn');
+  const stickySyncBtn = $('stickySyncBtn');
   const outBtn = $('portalSignOutBtn');
+
+  if(resyncBtn && !resyncBtn.classList.contains('syncing')){
+    resyncBtn.innerHTML = '🔄 Sync Attendance';
+  }
+  if(stickySyncBtn && !stickySyncBtn.classList.contains('syncing')){
+    stickySyncBtn.innerHTML = '🔄 Sync';
+  }
+
   if(portalMeta.connected){
     btn.textContent = `🔄 Sync (${portalMeta.batchLabel || portalMeta.batch || 'Portal'})`;
     btn.className = 'portal-btn connected';
@@ -1791,6 +1801,13 @@ function setSyncingState(isSyncing, label){
     } else {
       btn.classList.remove('syncing');
       btn.disabled = false;
+      if(btn.id === 'resyncBtn'){
+        btn.innerHTML = '🔄 Sync Attendance';
+      } else if(btn.id === 'stickySyncBtn'){
+        btn.innerHTML = '🔄 Sync';
+      } else if(btn.dataset.origHtml){
+        btn.innerHTML = btn.dataset.origHtml;
+      }
       delete btn.dataset.origHtml;
     }
   });
@@ -1824,48 +1841,39 @@ async function syncBatch(batchValue){
       }
     }
 
-    // 1. Fetch overview
-    setSyncingState(true, 'Getting subjects…');
-    let overview;
-    try {
-      overview = await apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`);
-    } catch(err){
-      if((err.message.includes('Session expired') || err.message.includes('No active session')) &&
-         portalSettings.username && portalSettings.password){
-        setSyncingState(true, 'Re-authenticating…');
-        notice('Authenticating with Saveetha portal…', 'ok');
-        const loginRes = await apiPost('/api/login', {
-          username: portalSettings.username,
-          password: portalSettings.password
-        });
-        portalMeta.connected = true;
-        portalMeta.batches = loginRes.batches || [];
-        save();
-        overview = await apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`);
-      } else {
-        throw err;
+    // Immediate sync: If subjects already exist in sections, launch attendance fetches IMMEDIATELY!
+    let subjectsToSync = sections.length > 0 
+      ? sections.map(s => ({ id: s.id, name: s.subject }))
+      : [];
+
+    // Trigger overview concurrently (does not block subject attendance)
+    const overviewPromise = apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`).catch(err => {
+      console.warn('Overview fetch warning:', err.message);
+      return null;
+    });
+
+    // If no subjects cached yet, wait for overview to discover enrolled subjects
+    if(!subjectsToSync.length){
+      setSyncingState(true, 'Getting subjects…');
+      const ov = await overviewPromise;
+      if(ov && ov.subjects && ov.subjects.length){
+        subjectsToSync = ov.subjects;
       }
     }
 
-    portalMeta.batch = targetBatch;
-    portalMeta.consolidatedPct = overview.consolidated ? overview.consolidated.percentage : null;
-    portalMeta.connected = true;
-    portalMeta.lastSynced = Date.now();
-
-    const portalSubjects = overview.subjects || [];
-    if(portalSubjects.length === 0){
+    if(!subjectsToSync.length){
       notice('No enrolled subjects found in this batch.', 'error');
       setSyncingState(false);
       save(); render();
       return;
     }
 
-    // 2. Fetch all enrolled subject slots IN PARALLEL for maximum speed and efficiency
-    setSyncingState(true, `Syncing ${portalSubjects.length} subjects…`);
-    notice(`Fetching live attendance for ${portalSubjects.length} subjects in parallel…`);
+    // Fetch all subject attendances concurrently in parallel
+    setSyncingState(true, `Syncing ${subjectsToSync.length} subjects…`);
+    notice(`Fetching attendance for ${subjectsToSync.length} subjects in parallel…`);
 
     const results = await Promise.allSettled(
-      portalSubjects.map(async subj => {
+      subjectsToSync.map(async subj => {
         const attData = await apiGet(`/api/attendance?batch=${encodeURIComponent(targetBatch)}&subject=${encodeURIComponent(subj.id)}`);
         return { subj, attData };
       })
@@ -1877,7 +1885,7 @@ async function syncBatch(batchValue){
         const { subj, attData } = res.value;
         const rawRows = attData.rows || [];
 
-        // Clean stale 'UPCOMING' overrides for any rows that the college portal has now confirmed
+        // Purge any stale 'UPCOMING' simulation overrides for rows that the portal has now confirmed
         rawRows.forEach(r => {
           if(r.status !== 'UPCOMING'){
             const key = getOverrideKey(targetBatch, subj.id, r.date, r.time);
@@ -1910,6 +1918,17 @@ async function syncBatch(batchValue){
         console.warn('Subject sync failed:', res.reason?.message);
       }
     }
+
+    // Update portal metadata from overview when it resolves
+    const overview = await overviewPromise;
+    if(overview){
+      portalMeta.batch = targetBatch;
+      if(overview.consolidated && typeof overview.consolidated.percentage === 'number'){
+        portalMeta.consolidatedPct = overview.consolidated.percentage;
+      }
+    }
+    portalMeta.connected = true;
+    portalMeta.lastSynced = Date.now();
 
     if(!selectedIds.length && sections.length){
       selectedIds = [sections[0].id];

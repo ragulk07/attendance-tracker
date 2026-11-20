@@ -67,10 +67,16 @@ function recordBatchMapping(consolidatedId, termId, label) {
 }
 
 // Pre-populate known mappings for Saveetha batches and terms
-recordBatchMapping('2', '14', '2627-UG-ODD-T2');
-recordBatchMapping('3', '16', '2627-UG-ODD-T2-PLT');
-recordBatchMapping('14', '14', '26-27-ODD-T2');
-recordBatchMapping('16', '16', '26-27-ODD-T2-PLT');
+const mappingT2 = { consolidatedId: '2', termId: '14', label: '2627-UG-ODD-T2' };
+const mappingPLT = { consolidatedId: '3', termId: '16', label: '2627-UG-ODD-T2-PLT' };
+
+batchMap.set('2', mappingT2);
+batchMap.set('14', mappingT2);
+batchMap.set('2627ODDT2', mappingT2);
+batchMap.set('2627ODD', mappingT2);
+batchMap.set('3', mappingPLT);
+batchMap.set('16', mappingPLT);
+batchMap.set('2627ODDT2PLT', mappingPLT);
 
 function resolveBatch(batchValue) {
   const valStr = String(batchValue || '').trim();
@@ -83,10 +89,10 @@ function resolveBatch(batchValue) {
   }
   // Smart heuristic for Saveetha terms
   if (valStr.includes('PLT') || norm.includes('PLT') || valStr === '3' || valStr === '16') {
-    return { consolidatedId: '3', termId: '16', label: '2627-UG-ODD-T2-PLT' };
+    return mappingPLT;
   }
   if (valStr === '2' || valStr === '14' || norm.includes('2627ODDT2') || norm.includes('2627ODD')) {
-    return { consolidatedId: '2', termId: '14', label: '2627-UG-ODD-T2' };
+    return mappingT2;
   }
   return { consolidatedId: valStr, termId: valStr, label: valStr };
 }
@@ -417,6 +423,9 @@ async function getOverview(jar, batchValue, customAxios = null) {
     });
 
     slotItems = Array.isArray(slotsRes.data?.results) ? slotsRes.data.results : [];
+    if (slotItems.length > 0) {
+      slotCache.set(effectiveTerm, slotItems);
+    }
 
     // Fallback: If slots returned empty and effectiveTerm was not 14, try 14 or 16
     if (slotItems.length === 0 && effectiveTerm !== '14' && effectiveTerm !== '16') {
@@ -464,6 +473,42 @@ async function getOverview(jar, batchValue, customAxios = null) {
   };
 }
 
+const slotCache = new Map();
+
+async function resolveSlotId(client, termId, subjectId) {
+  const subjStr = String(subjectId || '').trim();
+  if (/^\d+$/.test(subjStr)) return subjStr;
+
+  let slots = slotCache.get(termId);
+  if (!slots || !slots.length) {
+    try {
+      const res = await client.get(URLS.SLOTS_API, {
+        params: { term_id: termId },
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json, text/javascript, */*',
+          'Referer': URLS.CALCULATE_ATTENDANCE
+        }
+      });
+      slots = Array.isArray(res.data?.results) ? res.data.results : [];
+      if (slots.length) slotCache.set(termId, slots);
+    } catch (e) {}
+  }
+
+  if (slots && slots.length) {
+    const norm = subjStr.toLowerCase();
+    const match = slots.find(s => {
+      const lbl = String(s.label || '').toLowerCase();
+      return lbl.includes(norm) || norm.includes(String(s.id)) || norm.includes(lbl);
+    });
+    if (match) return String(match.id);
+  }
+
+  // Fallback for known subject codes
+  if (subjStr.includes('26OD2138') || subjStr.includes('19AI553')) return '2761';
+  return subjStr;
+}
+
 async function getAttendance(jar, batchValue, subjectId, customAxios = null) {
   if (!batchValue) throw new PortalError('Batch parameter is required', ERROR_CODES.BATCH_NOT_FOUND);
   if (!subjectId) throw new PortalError('Subject parameter is required', ERROR_CODES.PORTAL_CHANGED);
@@ -474,12 +519,14 @@ async function getAttendance(jar, batchValue, subjectId, customAxios = null) {
   if (termId === '2') termId = '14';
   if (termId === '3') termId = '16';
 
+  const effectiveSlotId = await resolveSlotId(client, termId, subjectId);
+
   let res;
   try {
     res = await client.get(URLS.CALCULATE_ATTENDANCE, {
       params: {
         term_id: termId,
-        slot_id: subjectId,
+        slot_id: effectiveSlotId,
         action: 'calculate'
       }
     });
