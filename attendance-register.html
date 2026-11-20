@@ -1929,7 +1929,9 @@ async function doSync(batchValue) {
   setSyncingState(true, 'Waking server…');
   try {
     await api('/healthz', { timeout: 15000 }).catch(() => {}); // wake-up ping
-    await ensureLogin();
+    if(portalSettings.username && portalSettings.password && !portalMeta.connected){
+      await ensureLogin().catch(() => {});
+    }
     setSyncingState(true, 'Fetching…');
 
     const data = await api(`/api/sync?batch=${encodeURIComponent(batch)}`, { timeout: 90000 });
@@ -1960,8 +1962,7 @@ async function doSync(batchValue) {
     save();
     renderConsolidated();
     if (e.code === 'NEEDS_LOGIN') {
-      openSettingsModal();
-      notice('Please enter your portal password in Settings (⚙️) to enable direct sync.', 'warn');
+      notice('Sign in required. Click ⚙️ Settings in the top bar to save your portal credentials for 1-click sync.', 'warn');
       return;
     }
     const when = portalMeta.lastSynced
