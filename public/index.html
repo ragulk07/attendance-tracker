@@ -1650,19 +1650,22 @@ async function api(url, opts, tries = 3) {
 const apiPost = (url, body) => api(url, { method: 'POST', body });
 const apiGet = (url, opts) => api(url, { method: 'GET', ...opts });
 
-function openPortalModal(){
+function openPortalModal(forceLogin = false){
   $('portalStatusMsg').style.display = 'none';
-  if(portalMeta.batches && portalMeta.batches.length > 0){
+  if(!forceLogin && portalMeta.connected && portalMeta.batches && portalMeta.batches.length > 0){
     populateBatchSelect(portalMeta.batches);
     $('portalStepLogin').style.display = 'none';
     $('portalStepBatch').style.display = 'block';
   } else {
     $('portalStepLogin').style.display = 'block';
     $('portalStepBatch').style.display = 'none';
+    $('portalUsername').value = portalSettings.username || portalMeta.username || '';
+    $('portalPassword').value = portalSettings.password || '';
   }
   $('portalModal').style.display = 'flex';
   if($('portalStepLogin').style.display === 'block'){
-    $('portalUsername').focus();
+    if($('portalUsername').value) $('portalPassword').focus();
+    else $('portalUsername').focus();
   }
 }
 
@@ -1678,29 +1681,21 @@ function populateBatchSelect(batches){
   }
 }
 
-// Login & Batch flow
+// Direct sync from buttons without popups
 $('portalConnectBtn').addEventListener('click', () => {
-  const targetBatch = portalMeta.batch || portalSettings.batch;
-  if(targetBatch && portalSettings.username && portalSettings.password && portalSettings.autoSync){
-    syncBatch(targetBatch);
-  } else if(portalMeta.connected && portalMeta.batch){
-    syncBatch(portalMeta.batch);
-  } else {
-    openPortalModal();
-  }
+  const targetBatch = portalSettings.batch || portalMeta.batch || '2';
+  syncBatch(targetBatch);
 });
 $('portalModalClose').addEventListener('click', closePortalModal);
 $('portalLoginCancel').addEventListener('click', closePortalModal);
 $('resyncBtn').addEventListener('click', () => {
-  const targetBatch = portalMeta.batch || portalSettings.batch;
-  if(targetBatch) syncBatch(targetBatch);
-  else openPortalModal();
+  const targetBatch = portalSettings.batch || portalMeta.batch || '2';
+  syncBatch(targetBatch);
 });
 if($('stickySyncBtn')){
   $('stickySyncBtn').addEventListener('click', () => {
-    const targetBatch = portalMeta.batch || portalSettings.batch;
-    if(targetBatch) syncBatch(targetBatch);
-    else openPortalModal();
+    const targetBatch = portalSettings.batch || portalMeta.batch || '2';
+    syncBatch(targetBatch);
   });
 }
 
@@ -1930,7 +1925,7 @@ function syncBatch(batch) {
 }
 
 async function doSync(batchValue) {
-  const batch = batchValue || portalMeta.batch || portalSettings.batch || '2';
+  const batch = batchValue || portalSettings.batch || portalMeta.batch || '2';
   setSyncingState(true, 'Waking server…');
   try {
     await api('/healthz', { timeout: 15000 }).catch(() => {}); // wake-up ping
@@ -1964,7 +1959,11 @@ async function doSync(batchValue) {
     portalMeta.lastSyncStatus = 'failed';
     save();
     renderConsolidated();
-    if (e.code === 'NEEDS_LOGIN') { openPortalModal(); }
+    if (e.code === 'NEEDS_LOGIN') {
+      openSettingsModal();
+      notice('Please enter your portal password in Settings (⚙️) to enable direct sync.', 'warn');
+      return;
+    }
     const when = portalMeta.lastSynced
       ? new Date(portalMeta.lastSynced).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'never';
     notice(`Sync failed: ${e.message}. Showing data from ${when}`, 'error');
