@@ -14,8 +14,8 @@ jobs:
         run: |
           TARGET="${{ secrets.RENDER_APP_URL || vars.RENDER_APP_URL }}"
           if [ -z "$TARGET" ]; then
-            echo "No RENDER_APP_URL configured yet. Add it to GitHub Repo Settings -> Secrets/Variables."
-            exit 0
+            echo "Error: No RENDER_APP_URL configured! Add it to GitHub Repo Settings -> Secrets/Variables."
+            exit 1
           fi
           
           TARGET="${TARGET%/}"
@@ -30,5 +30,6 @@ jobs:
           if [ "$HTTP_CODE" -eq 200 ]; then
             echo "Render server is awake and healthy!"
           else
-            echo "Server responded with status $HTTP_CODE"
+            echo "Error: Server responded with status $HTTP_CODE"
+            exit 1
           fi

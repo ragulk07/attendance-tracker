@@ -504,8 +504,6 @@ async function resolveSlotId(client, termId, subjectId) {
     if (match) return String(match.id);
   }
 
-  // Fallback for known subject codes
-  if (subjStr.includes('26OD2138') || subjStr.includes('19AI553')) return '2761';
   return subjStr;
 }
 

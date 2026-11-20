@@ -232,6 +232,20 @@
     font-family: 'JetBrains Mono', monospace;
     font-weight: 500;
   }
+  .stale-badge {
+    display: inline-block;
+    background: var(--absent-bg);
+    color: var(--absent);
+    border: 1px solid var(--absent-border);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
 
   /* ---- buttons ---- */
   button {
@@ -1379,7 +1393,14 @@ function renderConsolidated(){
     btn.className = 'portal-btn connected';
     outBtn.style.display = 'inline-flex';
     if(portalMeta.lastSynced){
-      $('stamp').textContent = 'Synced ' + new Date(portalMeta.lastSynced).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      const timeStr = new Date(portalMeta.lastSynced).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      if(portalMeta.lastSyncStatus && portalMeta.lastSyncStatus !== 'ok'){
+        $('stamp').innerHTML = `Synced ${timeStr} <span class="stale-badge" title="Data may be stale. Last sync attempt had issues.">stale</span>`;
+      } else {
+        $('stamp').textContent = 'Synced ' + timeStr;
+      }
+    } else {
+      $('stamp').textContent = '';
     }
   } else {
     btn.textContent = '⚡ Connect Portal';
@@ -1553,39 +1574,81 @@ function applyOverrides(batch, subjectId, rows){
   });
 }
 
-/* ---------- PORTAL INTEGRATION ---------- */
-async function apiPost(url, body){
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  if(!res.ok) throw new Error(data.error || 'Server error');
-  return data;
+/* ---------- PORTAL INTEGRATION: ROBUST API WRAPPER ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function apiRaw(url, { method = 'GET', body, timeout = 60000 } = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const res = await fetch(url, {
+      method,
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+    if (!data) {                          // HTML page from Render while waking
+      const e = new Error('Server is waking up');
+      e.retry = true;
+      throw e;
+    }
+    if (!res.ok) {
+      const e = new Error(data.error || 'Server error');
+      e.code = data.code;
+      e.retry = res.status === 502 || res.status === 503;
+      throw e;
+    }
+    return data;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
-async function apiGet(url){
-  const sep = url.includes('?') ? '&' : '?';
-  const bustUrl = `${url}${sep}_t=${Date.now()}`;
-  const res = await fetch(bustUrl, {
-    cache: 'no-store',
-    headers: {
-      'Accept': 'application/json',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache'
-    }
-  });
-  const data = await res.json();
-  if(!res.ok){
-    if(data.code === 'SESSION_EXPIRED'){
-      portalMeta.connected = false;
-      save(); renderConsolidated();
-    }
-    throw new Error(data.error || 'Server error');
+let loginPromise = null;                  // single-flight login
+function ensureLogin(force = false) {
+  if (!force && portalMeta.connected) return Promise.resolve();
+  if (!portalSettings.username || !portalSettings.password) {
+    const e = new Error('Sign in required');
+    e.code = 'NEEDS_LOGIN';
+    throw e;
   }
-  return data;
+  return (loginPromise ??= apiRaw('/api/login', {
+    method: 'POST',
+    body: { username: portalSettings.username, password: portalSettings.password }
+  })
+    .then(r => {
+      portalMeta.connected = true;
+      portalMeta.batches = r.batches || [];
+      save();
+    })
+    .finally(() => { loginPromise = null; }));
 }
+
+async function api(url, opts, tries = 3) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await apiRaw(url, opts);
+    } catch (e) {
+      if (e.code === 'SESSION_EXPIRED' && i === 0) {   // re-login once, retry
+        portalMeta.connected = false;
+        await ensureLogin(true);
+        continue;
+      }
+      if ((e.retry || e.name === 'AbortError') && i < tries - 1) {
+        await sleep(1500 * 2 ** i);                    // 1.5s, 3s backoff
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+const apiPost = (url, body) => api(url, { method: 'POST', body });
+const apiGet = (url, opts) => api(url, { method: 'GET', ...opts });
 
 function openPortalModal(){
   $('portalStatusMsg').style.display = 'none';
@@ -1816,135 +1879,95 @@ function setSyncingState(isSyncing, label){
   }
 }
 
-async function syncBatch(batchValue){
-  const targetBatch = batchValue || portalMeta.batch || portalSettings.batch || '2';
-  const label = portalMeta.batchLabel || portalSettings.batchLabel || `Batch ${targetBatch}`;
-  const startTime = Date.now();
+function mergeSubject(batch, s){
+  const rawRows = s.rows || [];
+  const slotId = String(s.id);
 
-  setSyncingState(true, 'Syncing…');
-  notice(`Syncing attendance for ${label}…`);
-
-  try{
-    // If not connected and we have saved credentials, auto-authenticate first
-    if(!portalMeta.connected && portalSettings.username && portalSettings.password){
-      setSyncingState(true, 'Signing in…');
-      try{
-        const loginRes = await apiPost('/api/login', {
-          username: portalSettings.username,
-          password: portalSettings.password
-        });
-        portalMeta.connected = true;
-        portalMeta.batches = loginRes.batches || [];
-        save();
-      } catch(e){
-        console.warn('Initial auth attempt:', e.message);
+  // 1. Purge stale UPCOMING overrides for rows that the portal has now confirmed
+  rawRows.forEach(r => {
+    if(r.status !== 'UPCOMING'){
+      const key = getOverrideKey(batch, slotId, r.date, r.time);
+      const saved = localStorage.getItem(key);
+      if(saved === 'UPCOMING'){
+        try { localStorage.removeItem(key); } catch(e){}
       }
     }
+  });
 
-    // Immediate sync: If subjects already exist in sections, launch attendance fetches IMMEDIATELY!
-    let subjectsToSync = sections.length > 0 
-      ? sections.map(s => ({ id: s.id, name: s.subject }))
-      : [];
+  // 2. Apply intentional user overrides
+  const rowsWithOverrides = applyOverrides(batch, slotId, rawRows);
 
-    // Trigger overview concurrently (does not block subject attendance)
-    const overviewPromise = apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`).catch(err => {
-      console.warn('Overview fetch warning:', err.message);
-      return null;
+  // 3. Find matching section by portalSlotId, id, or normalized name
+  const normName = String(s.name || '').trim().toLowerCase();
+  const existing = sections.find(sec => 
+    (sec.portalSlotId && String(sec.portalSlotId) === slotId) ||
+    String(sec.id) === slotId ||
+    String(sec.subject || '').trim().toLowerCase() === normName ||
+    (sec.subject && s.name && (sec.subject.includes(s.name) || s.name.includes(sec.subject)))
+  );
+
+  if(existing){
+    existing.portalSlotId = slotId;
+    existing.id = slotId;
+    existing.subject = s.name;
+    existing.rows = rowsWithOverrides;
+    existing.portalOriginalRows = rawRows;
+  } else {
+    sections.push({
+      id: slotId,
+      portalSlotId: slotId,
+      subject: s.name,
+      createdAt: Date.now(),
+      rows: rowsWithOverrides,
+      portalOriginalRows: rawRows
     });
+  }
+}
 
-    // If no subjects cached yet, wait for overview to discover enrolled subjects
-    if(!subjectsToSync.length){
-      setSyncingState(true, 'Getting subjects…');
-      const ov = await overviewPromise;
-      if(ov && ov.subjects && ov.subjects.length){
-        subjectsToSync = ov.subjects;
-      }
+let syncing = null; // prevents auto-sync vs click races
+function syncBatch(batch) {
+  return (syncing ??= doSync(batch).finally(() => { syncing = null; }));
+}
+
+async function doSync(batchValue) {
+  const batch = batchValue || portalMeta.batch || portalSettings.batch || '2';
+  setSyncingState(true, 'Waking server…');
+  try {
+    await api('/healthz', { timeout: 15000 }).catch(() => {}); // wake-up ping
+    await ensureLogin();
+    setSyncingState(true, 'Fetching…');
+
+    const data = await api(`/api/sync?batch=${encodeURIComponent(batch)}`, { timeout: 90000 });
+    const ok = data.subjects ? data.subjects.filter(s => s.ok) : [];
+    const failed = data.subjects ? data.subjects.filter(s => !s.ok) : [];
+    if (!ok.length) {
+      throw new Error(failed[0]?.error || 'No subject data returned from portal');
     }
 
-    if(!subjectsToSync.length){
-      notice('No enrolled subjects found in this batch.', 'error');
-      setSyncingState(false);
-      save(); render();
-      return;
+    ok.forEach(s => mergeSubject(batch, s));
+
+    if (typeof data.consolidated?.percentage === 'number') {
+      portalMeta.consolidatedPct = data.consolidated.percentage;
     }
-
-    // Fetch all subject attendances concurrently in parallel
-    setSyncingState(true, `Syncing ${subjectsToSync.length} subjects…`);
-    notice(`Fetching attendance for ${subjectsToSync.length} subjects in parallel…`);
-
-    const results = await Promise.allSettled(
-      subjectsToSync.map(async subj => {
-        const attData = await apiGet(`/api/attendance?batch=${encodeURIComponent(targetBatch)}&subject=${encodeURIComponent(subj.id)}`);
-        return { subj, attData };
-      })
-    );
-
-    let updatedCount = 0;
-    for(const res of results){
-      if(res.status === 'fulfilled'){
-        const { subj, attData } = res.value;
-        const rawRows = attData.rows || [];
-
-        // Purge any stale 'UPCOMING' simulation overrides for rows that the portal has now confirmed
-        rawRows.forEach(r => {
-          if(r.status !== 'UPCOMING'){
-            const key = getOverrideKey(targetBatch, subj.id, r.date, r.time);
-            const saved = localStorage.getItem(key);
-            if(saved === 'UPCOMING'){
-              try { localStorage.removeItem(key); } catch(e){}
-            }
-          }
-        });
-
-        const rowsWithOverrides = applyOverrides(targetBatch, subj.id, rawRows);
-
-        const existing = sections.find(s => s.id === subj.id || s.subject.toLowerCase() === subj.name.toLowerCase());
-        if(existing){
-          existing.id = subj.id;
-          existing.subject = subj.name;
-          existing.rows = rowsWithOverrides;
-          existing.portalOriginalRows = rawRows;
-        } else {
-          sections.push({
-            id: subj.id,
-            subject: subj.name,
-            createdAt: Date.now(),
-            rows: rowsWithOverrides,
-            portalOriginalRows: rawRows
-          });
-        }
-        updatedCount++;
-      } else {
-        console.warn('Subject sync failed:', res.reason?.message);
-      }
-    }
-
-    // Update portal metadata from overview when it resolves
-    const overview = await overviewPromise;
-    if(overview){
-      portalMeta.batch = targetBatch;
-      if(overview.consolidated && typeof overview.consolidated.percentage === 'number'){
-        portalMeta.consolidatedPct = overview.consolidated.percentage;
-      }
-    }
+    portalMeta.batch = batch;
     portalMeta.connected = true;
-    portalMeta.lastSynced = Date.now();
+    portalMeta.lastSynced = data.syncedAt || Date.now(); // ONLY on real success
+    portalMeta.lastSyncStatus = failed.length
+      ? `partial ${ok.length}/${data.subjects.length}` : 'ok';
+    if (!selectedIds.length && sections.length) selectedIds = [sections[0].id];
+    save(); render();
 
-    if(!selectedIds.length && sections.length){
-      selectedIds = [sections[0].id];
-    }
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    notice(failed.length
+      ? `Synced ${ok.length}/${data.subjects.length} subjects (failed: ${failed.map(f => f.name).join(', ')})`
+      : `Synced ${ok.length} subjects successfully!`, failed.length ? 'warn' : 'ok');
+  } catch (e) {
+    portalMeta.lastSyncStatus = 'failed';
     save();
-    render();
-    notice(`⚡ Attendance synced successfully (${updatedCount} subjects in ${duration}s)!`, 'ok');
-  } catch(err){
-    if(err.message.includes('Session expired') || err.message.includes('No active session')){
-      openPortalModal();
-      notice('Please sign in to connect to the portal.', 'warn');
-    } else {
-      notice('Sync failed: ' + err.message, 'error');
-    }
+    renderConsolidated();
+    if (e.code === 'NEEDS_LOGIN') { openPortalModal(); }
+    const when = portalMeta.lastSynced
+      ? new Date(portalMeta.lastSynced).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'never';
+    notice(`Sync failed: ${e.message}. Showing data from ${when}`, 'error');
   } finally {
     setSyncingState(false);
   }

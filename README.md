@@ -13,10 +13,10 @@ Mobile / Desktop Browser (SPA)
 ```
 
 ### Security Compliance:
-1. **Never Stores Passwords**: Passwords are sent over HTTPS once directly during authentication, used in memory to negotiate portal session cookies, and immediately discarded. Never logged, never stored in files, databases, or cookies.
+1. **Server Never Stores Passwords**: The server never stores passwords in files or databases. Passwords are sent over HTTPS, used in memory to negotiate portal session cookies, and immediately discarded. In the browser, credentials can be saved in local storage (via Settings) to enable 1-click automatic background re-authentication.
 2. **Ephemeral Memory-Only Sessions**: Portal session cookies (`CookieJar`) live exclusively in server RAM, keyed by a cryptographically random 32-byte (64-character hex) token with a 30-minute idle expiry. The browser holds only an `HttpOnly`, `SameSite=Strict`, `Secure` cookie.
 3. **Strict HTTPS & Headers**: Includes `HSTS` (`maxAge: 31536000`, `includeSubDomains`), `X-Content-Type-Options: nosniff`, and a strict `Content-Security-Policy`.
-4. **Brute-Force Rate Limiting**: Maximum 5 login attempts per 15 minutes per IP address via `express-rate-limit`.
+4. **Brute-Force Rate Limiting**: Up to 30 login attempts per 15 minutes per IP address via `express-rate-limit` (successful requests do not consume lockout attempts).
 5. **SSRF Guard**: Strict destination hostname allow-list (`learner.saveetha.in` and `accounts.saveetha.in`). Any redirect or request attempting to exit this perimeter is blocked.
 6. **No Crawling or Polling**: Synchronizes only the authenticated user's own batch and subject attendance on explicit user sync.
 7. **Anti-Bot / Captcha Awareness**: Halts cleanly with `CAPTCHA_REQUIRED` without attempting bypasses if CAPTCHA or OTP challenges appear.

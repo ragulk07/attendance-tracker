@@ -141,6 +141,12 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   }
 
   try {
+    // Destroy previous session for the same browser cookie if present
+    const oldToken = req.cookies[SESSION_COOKIE_NAME];
+    if (oldToken) {
+      sessionStore.destroySession(oldToken);
+    }
+
     // Create new in-memory session
     const { token, jar } = sessionStore.createSession(username);
 
@@ -198,6 +204,55 @@ app.get('/api/attendance', requireAuth, async (req, res) => {
   }
 });
 
+// Single-call sync endpoint (overview + all subjects with controlled concurrency and retries)
+app.get('/api/sync', requireAuth, async (req, res) => {
+  const parsed = OverviewQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return sendError(res, 400, 'Batch is required', ERROR_CODES.PORTAL_CHANGED);
+  }
+  const started = Date.now();
+  try {
+    const { jar } = req.session;
+    const batch = parsed.data.batch;
+    const overview = await getOverview(jar, batch);
+
+    const subjects = [];
+    const overviewSubjects = overview.subjects || [];
+    for (let i = 0; i < overviewSubjects.length; i += 3) {       // 3 at a time
+      const chunk = overviewSubjects.slice(i, i + 3);
+      const out = await Promise.all(chunk.map(async s => {
+        for (let attempt = 0; attempt < 2; attempt++) {           // 1 retry
+          try {
+            const att = await getAttendance(jar, batch, s.id);
+            return { id: s.id, name: s.name, ok: true, rows: att.rows };
+          } catch (e) {
+            const last = attempt === 1 || e.code === ERROR_CODES.SESSION_EXPIRED;
+            if (last) {
+              return { id: s.id, name: s.name, ok: false,
+                       error: e.message, code: e.code };
+            }
+          }
+        }
+      }));
+      subjects.push(...out);
+    }
+
+    const okCount = subjects.filter(s => s.ok).length;
+    console.log(`[sync] batch=${batch} ok=${okCount}/${subjects.length} ms=${Date.now() - started}`);
+
+    res.json({
+      batch,
+      consolidated: overview.consolidated,
+      subjects,
+      syncedAt: Date.now()
+    });
+  } catch (err) {
+    const code = err instanceof PortalError ? err.code : ERROR_CODES.PORTAL_UNAVAILABLE;
+    const status = code === ERROR_CODES.SESSION_EXPIRED ? 401 : 502;
+    sendError(res, status, err.message, code);
+  }
+});
+
 // Logout endpoint
 app.post('/api/logout', (req, res) => {
   const token = req.cookies[SESSION_COOKIE_NAME];
@@ -222,5 +277,8 @@ if (require.main === module) {
     console.log(`Attendance Register server running on port ${PORT}`);
   });
 }
+
+app.sessionStore = sessionStore;
+app.SESSION_COOKIE_NAME = SESSION_COOKIE_NAME;
 
 module.exports = app;
