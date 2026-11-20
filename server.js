@@ -126,6 +126,31 @@ app.get('/healthz', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
 });
 
+// Portal reachability diagnostic
+app.get('/healthz/portal', async (req, res) => {
+  const started = Date.now();
+  try {
+    const fetchRes = await fetch('https://accounts.saveetha.in/login/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    res.json({
+      reachable: true,
+      status: fetchRes.status,
+      timeMs: Date.now() - started
+    });
+  } catch (err) {
+    res.status(502).json({
+      reachable: false,
+      error: err.message,
+      code: err.code || 'UNKNOWN',
+      timeMs: Date.now() - started
+    });
+  }
+});
+
 // Login endpoint
 app.post('/api/login', loginLimiter, async (req, res) => {
   const parsed = LoginSchema.safeParse(req.body);
