@@ -1083,10 +1083,11 @@
     <input type="text" id="settingsUsername" placeholder="e.g. 24006231" autocomplete="username">
 
     <label class="field-label" for="settingsPassword">Default Password</label>
-    <div style="display:flex; gap:0.4em; align-items:center; margin-bottom:0.9em;">
-      <input type="password" id="settingsPassword" placeholder="Portal password" style="margin-bottom:0;" autocomplete="current-password">
+    <div style="display:flex; gap:0.4em; align-items:center; margin-bottom:0.3em;">
+      <input type="password" id="settingsPassword" placeholder="Enter Saveetha portal password" style="margin-bottom:0;" autocomplete="current-password">
       <button class="ghost tiny" type="button" id="toggleSettingsPass" style="white-space:nowrap; min-height:40px;">Show</button>
     </div>
+    <small style="color:var(--ink-soft); display:block; margin-bottom:0.9em; font-size:0.75em;">Required to authenticate with learner.saveetha.in. Stored only in this browser for 1-click sync.</small>
 
     <label class="field-label" for="settingsBatch">Default Academic Batch</label>
     <select id="settingsBatch" style="margin-bottom:1em;">
@@ -1681,11 +1682,11 @@ function populateBatchSelect(batches){
   }
 }
 
-// Direct sync from buttons
+// Direct sync from buttons - NO surprise popups
 $('portalConnectBtn').addEventListener('click', () => {
   const targetBatch = portalSettings.batch || portalMeta.batch || '2';
   if(!portalSettings.password && !portalMeta.connected){
-    openSettingsModal();
+    notice('⚠️ Please enter your Saveetha portal password in ⚙️ Settings once to enable 1-click sync.', 'warn');
   } else {
     syncBatch(targetBatch);
   }
@@ -1695,8 +1696,7 @@ $('portalLoginCancel').addEventListener('click', closePortalModal);
 $('resyncBtn').addEventListener('click', () => {
   const targetBatch = portalSettings.batch || portalMeta.batch || '2';
   if(!portalSettings.password && !portalMeta.connected){
-    notice('Please enter your portal password in ⚙️ Settings once to connect to learner.saveetha.in.', 'warn');
-    openSettingsModal();
+    notice('⚠️ Please enter your Saveetha portal password in ⚙️ Settings once to enable 1-click sync.', 'warn');
   } else {
     syncBatch(targetBatch);
   }
@@ -1705,7 +1705,7 @@ if($('stickySyncBtn')){
   $('stickySyncBtn').addEventListener('click', () => {
     const targetBatch = portalSettings.batch || portalMeta.batch || '2';
     if(!portalSettings.password && !portalMeta.connected){
-      openSettingsModal();
+      notice('⚠️ Please enter your Saveetha portal password in ⚙️ Settings once to enable 1-click sync.', 'warn');
     } else {
       syncBatch(targetBatch);
     }
@@ -2215,10 +2215,9 @@ if(portalSettings && portalSettings.autoSync !== false && portalSettings.usernam
     notice(`Auto-syncing attendance for ${portalSettings.batchLabel || targetBatch}…`);
     syncBatch(targetBatch);
   }, 400);
-} else if(sections.length === 0 && !portalMeta.connected){
+} else if(sections.length === 0 && !portalMeta.connected && !portalSettings.username){
   setTimeout(() => {
-    notice('Welcome! Please sign in to connect your Saveetha portal.', 'ok');
-    openPortalModal();
+    notice('Welcome! Configure your Saveetha portal in ⚙️ Settings to sync attendance.', 'ok');
   }, 500);
 }
 </script>
