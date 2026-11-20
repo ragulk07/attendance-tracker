@@ -1681,27 +1681,40 @@ function populateBatchSelect(batches){
   }
 }
 
-// Direct sync from buttons without popups
+// Direct sync from buttons
 $('portalConnectBtn').addEventListener('click', () => {
   const targetBatch = portalSettings.batch || portalMeta.batch || '2';
-  syncBatch(targetBatch);
+  if(!portalSettings.password && !portalMeta.connected){
+    openSettingsModal();
+  } else {
+    syncBatch(targetBatch);
+  }
 });
 $('portalModalClose').addEventListener('click', closePortalModal);
 $('portalLoginCancel').addEventListener('click', closePortalModal);
 $('resyncBtn').addEventListener('click', () => {
   const targetBatch = portalSettings.batch || portalMeta.batch || '2';
-  syncBatch(targetBatch);
+  if(!portalSettings.password && !portalMeta.connected){
+    notice('Please enter your portal password in ⚙️ Settings once to connect to learner.saveetha.in.', 'warn');
+    openSettingsModal();
+  } else {
+    syncBatch(targetBatch);
+  }
 });
 if($('stickySyncBtn')){
   $('stickySyncBtn').addEventListener('click', () => {
     const targetBatch = portalSettings.batch || portalMeta.batch || '2';
-    syncBatch(targetBatch);
+    if(!portalSettings.password && !portalMeta.connected){
+      openSettingsModal();
+    } else {
+      syncBatch(targetBatch);
+    }
   });
 }
 
 // Settings Modal handlers
 function openSettingsModal(){
-  $('settingsUsername').value = portalSettings.username || portalMeta.username || '';
+  $('settingsUsername').value = portalSettings.username || portalMeta.username || '24006231';
   $('settingsPassword').value = portalSettings.password || '';
   $('settingsPassword').type = 'password';
   $('toggleSettingsPass').textContent = 'Show';
@@ -1715,6 +1728,9 @@ function openSettingsModal(){
     batchSel.value = portalSettings.batch;
   }
   $('portalSettingsModal').style.display = 'flex';
+  if(!$('settingsPassword').value){
+    setTimeout(() => $('settingsPassword').focus(), 100);
+  }
 }
 
 function closeSettingsModal(){
@@ -1746,6 +1762,17 @@ $('saveSettingsBtn').addEventListener('click', () => {
   const bLabel = bOpt ? bOpt.textContent : b;
   const auto = $('settingsAutoSync').checked;
 
+  if(!u){
+    notice('Please enter your Student ID (Username).', 'error');
+    $('settingsUsername').focus();
+    return;
+  }
+  if(!p){
+    notice('Please enter your Saveetha Portal password.', 'error');
+    $('settingsPassword').focus();
+    return;
+  }
+
   portalSettings = {
     username: u,
     password: p,
@@ -1754,14 +1781,12 @@ $('saveSettingsBtn').addEventListener('click', () => {
     autoSync: auto
   };
 
-  if(!portalMeta.batch && b){
-    portalMeta.batch = b;
-    portalMeta.batchLabel = bLabel;
-  }
+  portalMeta.batch = b;
+  portalMeta.batchLabel = bLabel;
 
   save();
   closeSettingsModal();
-  notice('Default settings saved! Syncing attendance now…', 'ok');
+  notice('Connecting to Saveetha portal & syncing attendance now…', 'ok');
   renderConsolidated();
   syncBatch(b);
 });
