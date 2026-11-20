@@ -66,14 +66,27 @@ function recordBatchMapping(consolidatedId, termId, label) {
   if (norm) batchMap.set(norm, mapping);
 }
 
+// Pre-populate known mappings for Saveetha batches and terms
+recordBatchMapping('2', '14', '2627-UG-ODD-T2');
+recordBatchMapping('3', '16', '2627-UG-ODD-T2-PLT');
+recordBatchMapping('14', '14', '26-27-ODD-T2');
+recordBatchMapping('16', '16', '26-27-ODD-T2-PLT');
+
 function resolveBatch(batchValue) {
-  const valStr = String(batchValue || '');
+  const valStr = String(batchValue || '').trim();
   if (batchMap.has(valStr)) {
     return batchMap.get(valStr);
   }
   const norm = normalizeBatchLabel(valStr);
   if (batchMap.has(norm)) {
     return batchMap.get(norm);
+  }
+  // Smart heuristic for Saveetha terms
+  if (valStr.includes('PLT') || norm.includes('PLT') || valStr === '3' || valStr === '16') {
+    return { consolidatedId: '3', termId: '16', label: '2627-UG-ODD-T2-PLT' };
+  }
+  if (valStr === '2' || valStr === '14' || norm.includes('2627ODDT2') || norm.includes('2627ODD')) {
+    return { consolidatedId: '2', termId: '14', label: '2627-UG-ODD-T2' };
   }
   return { consolidatedId: valStr, termId: valStr, label: valStr };
 }
@@ -389,15 +402,44 @@ async function getOverview(jar, batchValue, customAxios = null) {
 
   // 3. Fetch enrolled subject slots from /academics/calculate-my-attendance/slots/
   try {
+    let slotItems = [];
+    let effectiveTerm = termId;
+    if (effectiveTerm === '2') effectiveTerm = '14';
+    if (effectiveTerm === '3') effectiveTerm = '16';
+
     const slotsRes = await client.get(URLS.SLOTS_API, {
-      params: { term_id: termId },
+      params: { term_id: effectiveTerm },
       headers: {
         'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'application/json, text/javascript, */*'
+        'Accept': 'application/json, text/javascript, */*',
+        'Referer': URLS.CALCULATE_ATTENDANCE
       }
     });
 
-    const slotItems = Array.isArray(slotsRes.data?.results) ? slotsRes.data.results : [];
+    slotItems = Array.isArray(slotsRes.data?.results) ? slotsRes.data.results : [];
+
+    // Fallback: If slots returned empty and effectiveTerm was not 14, try 14 or 16
+    if (slotItems.length === 0 && effectiveTerm !== '14' && effectiveTerm !== '16') {
+      for (const fallbackTerm of ['14', '16']) {
+        try {
+          const fbRes = await client.get(URLS.SLOTS_API, {
+            params: { term_id: fallbackTerm },
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Accept': 'application/json, text/javascript, */*',
+              'Referer': URLS.CALCULATE_ATTENDANCE
+            }
+          });
+          const fbItems = Array.isArray(fbRes.data?.results) ? fbRes.data.results : [];
+          if (fbItems.length > 0) {
+            slotItems = fbItems;
+            recordBatchMapping(batchValue, fallbackTerm, fallbackTerm);
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
     if (slotItems.length > 0) {
       const merged = slotItems.map(item => {
         const idStr = String(item.id);
@@ -428,7 +470,9 @@ async function getAttendance(jar, batchValue, subjectId, customAxios = null) {
 
   const client = createClient(jar, customAxios);
   const resolved = resolveBatch(batchValue);
-  const termId = resolved.termId || batchValue;
+  let termId = resolved.termId || batchValue;
+  if (termId === '2') termId = '14';
+  if (termId === '3') termId = '16';
 
   let res;
   try {

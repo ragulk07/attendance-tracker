@@ -51,10 +51,11 @@ app.use(helmet({
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 
-// Rate limit for login (5 attempts per 15 minutes per IP)
+// Rate limit for login (30 attempts per 15 minutes, skipping successful logins)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 30,
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -138,12 +139,12 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     // Call portal adapter (password is passed once, never stored or logged)
     const result = await login(jar, username, password);
 
-    // Set HttpOnly, Secure, SameSite=Strict cookie
+    // Set HttpOnly, Secure, SameSite=Lax cookie
     const isProduction = process.env.NODE_ENV === 'production';
     res.cookie(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: 'strict',
+      sameSite: 'lax',
       maxAge: SESSION_TTL_MS
     });
 

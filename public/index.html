@@ -1635,8 +1635,9 @@ $('saveSettingsBtn').addEventListener('click', () => {
 
   save();
   closeSettingsModal();
-  notice('Default settings saved! 1-click direct sync is active.', 'ok');
+  notice('Default settings saved! Syncing attendance now…', 'ok');
   renderConsolidated();
+  syncBatch(b);
 });
 
 $('clearSettingsBtn').addEventListener('click', async () => {
@@ -1662,7 +1663,7 @@ $('portalBatchBack').addEventListener('click', () => {
 $('portalLoginSubmit').addEventListener('click', async () => {
   const username = $('portalUsername').value.trim();
   const password = $('portalPassword').value;
-  $('portalPassword').value = ''; // Immediately wipe password
+  $('portalPassword').value = ''; // Clear input
 
   if(!username || !password){
     notice('Please enter both portal username and password.', 'error');
@@ -1681,6 +1682,12 @@ $('portalLoginSubmit').addEventListener('click', async () => {
     portalMeta.username = username;
     portalMeta.batches = res.batches || [];
     portalMeta.connected = true;
+
+    // Automatically remember credentials in this browser so future syncs succeed
+    portalSettings.username = username;
+    portalSettings.password = password;
+    portalSettings.autoSync = true;
+    save();
 
     if(!portalMeta.batches.length){
       throw new Error('No academic batches found for this account.');
@@ -1705,27 +1712,67 @@ $('portalBatchSync').addEventListener('click', () => {
   const chosenBatch = sel.value;
   const chosenOption = sel.options[sel.selectedIndex];
   if(!chosenBatch) return;
-  portalMeta.batchLabel = chosenOption ? chosenOption.textContent : chosenBatch;
+  const chosenLabel = chosenOption ? chosenOption.textContent : chosenBatch;
+  portalMeta.batch = chosenBatch;
+  portalMeta.batchLabel = chosenLabel;
+  portalSettings.batch = chosenBatch;
+  portalSettings.batchLabel = chosenLabel;
+  save();
   closePortalModal();
   syncBatch(chosenBatch);
 });
 
 async function syncBatch(batchValue){
-  notice(`Syncing attendance for batch ${batchValue}…`);
+  const targetBatch = batchValue || portalMeta.batch || portalSettings.batch || '2';
+  notice(`Syncing attendance for ${portalMeta.batchLabel || portalSettings.batchLabel || targetBatch}…`);
   const connectBtn = $('portalConnectBtn');
   connectBtn.classList.add('syncing');
 
   try{
+    // If not connected and we have saved credentials, auto-authenticate first
+    if(!portalMeta.connected && portalSettings.username && portalSettings.password){
+      try{
+        const loginRes = await apiPost('/api/login', {
+          username: portalSettings.username,
+          password: portalSettings.password
+        });
+        portalMeta.connected = true;
+        portalMeta.batches = loginRes.batches || [];
+        save();
+      } catch(e){
+        console.warn('Initial auth attempt:', e.message);
+      }
+    }
+
     // 1. Fetch overview
-    const overview = await apiGet(`/api/overview?batch=${encodeURIComponent(batchValue)}`);
-    portalMeta.batch = batchValue;
+    let overview;
+    try {
+      overview = await apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`);
+    } catch(err){
+      if((err.message.includes('Session expired') || err.message.includes('No active session')) &&
+         portalSettings.username && portalSettings.password){
+        notice('Authenticating with Saveetha portal…', 'ok');
+        const loginRes = await apiPost('/api/login', {
+          username: portalSettings.username,
+          password: portalSettings.password
+        });
+        portalMeta.connected = true;
+        portalMeta.batches = loginRes.batches || [];
+        save();
+        overview = await apiGet(`/api/overview?batch=${encodeURIComponent(targetBatch)}`);
+      } else {
+        throw err;
+      }
+    }
+
+    portalMeta.batch = targetBatch;
     portalMeta.consolidatedPct = overview.consolidated ? overview.consolidated.percentage : null;
     portalMeta.connected = true;
     portalMeta.lastSynced = Date.now();
 
     const portalSubjects = overview.subjects || [];
     if(portalSubjects.length === 0){
-      notice('No enrolled subjects found in this batch.');
+      notice('No enrolled subjects found in this batch.', 'error');
       connectBtn.classList.remove('syncing');
       save(); render();
       return;
@@ -1735,8 +1782,8 @@ async function syncBatch(batchValue){
     let updatedCount = 0;
     for(const subj of portalSubjects){
       try{
-        const attData = await apiGet(`/api/attendance?batch=${encodeURIComponent(batchValue)}&subject=${encodeURIComponent(subj.id)}`);
-        const rowsWithOverrides = applyOverrides(batchValue, subj.id, attData.rows || []);
+        const attData = await apiGet(`/api/attendance?batch=${encodeURIComponent(targetBatch)}&subject=${encodeURIComponent(subj.id)}`);
+        const rowsWithOverrides = applyOverrides(targetBatch, subj.id, attData.rows || []);
 
         const existing = sections.find(s => s.id === subj.id || s.subject.toLowerCase() === subj.name.toLowerCase());
         if(existing){
@@ -1768,28 +1815,11 @@ async function syncBatch(batchValue){
     notice(`Synced ${updatedCount} subject${updatedCount===1?'':'s'} successfully!`, 'ok');
   } catch(err){
     if(err.message.includes('Session expired') || err.message.includes('No active session')){
-      if(portalSettings.username && portalSettings.password && portalSettings.autoSync){
-        notice('Auto-authenticating with default settings…', 'ok');
-        try{
-          const loginRes = await apiPost('/api/login', {
-            username: portalSettings.username,
-            password: portalSettings.password
-          });
-          portalMeta.connected = true;
-          portalMeta.batches = loginRes.batches || [];
-          save();
-          return syncBatch(batchValue);
-        } catch(loginErr){
-          notice('Auto-login failed: ' + loginErr.message, 'error');
-          openPortalModal();
-          return;
-        }
-      } else {
-        openPortalModal();
-        return;
-      }
+      openPortalModal();
+      notice('Please sign in to connect to the portal.', 'warn');
+    } else {
+      notice('Sync failed: ' + err.message, 'error');
     }
-    notice('Sync failed: ' + err.message, 'error');
   } finally {
     connectBtn.classList.remove('syncing');
   }
@@ -1978,6 +2008,11 @@ if(portalSettings && portalSettings.autoSync !== false && portalSettings.usernam
     notice(`Auto-syncing attendance for ${portalSettings.batchLabel || targetBatch}…`);
     syncBatch(targetBatch);
   }, 400);
+} else if(sections.length === 0 && !portalMeta.connected){
+  setTimeout(() => {
+    notice('Welcome! Please sign in to connect your Saveetha portal.', 'ok');
+    openPortalModal();
+  }, 500);
 }
 </script>
 </body>
